@@ -1,0 +1,8 @@
+{
+  "name": "blink-claude-agent-sdk-bridge",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.2.138"
+  }
+}
