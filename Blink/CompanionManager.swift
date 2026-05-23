@@ -4841,7 +4841,20 @@ final class CompanionManager: ObservableObject {
             return
         }
 
-        sendTranscriptToClaudeWithScreenshot(transcript: trimmedText)
+        // Same brain-router dispatch the voice path uses: lets typed prompts
+        // like "check the weather in tokyo" reach web_search / open_url /
+        // run_background_agent instead of falling straight through to the
+        // screenshot pipeline. Falls back to the legacy path if the router
+        // can't reach Claude.
+        Task { [weak self] in
+            guard let self else { return }
+            let handled = await self.routeThroughBrain(transcript: trimmedText)
+            if !handled {
+                await MainActor.run {
+                    self.sendTranscriptToClaudeWithScreenshot(transcript: trimmedText)
+                }
+            }
+        }
     }
 
     private func submitPendingAgentVoiceFollowUp(_ transcript: String) -> Bool {
@@ -12485,6 +12498,23 @@ private final class BlinkTextModePanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+/// NSHostingView subclass whose `acceptsFirstMouse` returns true so SwiftUI
+/// buttons (the X / submit controls) receive the click on the first press,
+/// even when the borderless floating panel only briefly held key status.
+/// Without this, AppKit eats the first click while raising the window and
+/// the SwiftUI button action never fires.
+private final class BlinkTextModeHostingView: NSHostingView<BlinkTextModeInputView> {
+    required init(rootView: BlinkTextModeInputView) {
+        super.init(rootView: rootView)
+    }
+
+    @MainActor required dynamic init?(coder aDecoder: NSCoder) {
+        super.init(coder: aDecoder)
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 @MainActor
 final class BlinkTextModeWindowManager {
     private var panel: NSPanel?
@@ -12530,7 +12560,7 @@ final class BlinkTextModeWindowManager {
         textModePanel.isReleasedWhenClosed = false
         textModePanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-        let hostingView = NSHostingView(
+        let hostingView = BlinkTextModeHostingView(
             rootView: BlinkTextModeInputView(
                 accentThemeOverride: accentTheme,
                 submitText: submitText,
@@ -12551,7 +12581,7 @@ final class BlinkTextModeWindowManager {
     private func preparePanel(accentTheme: BlinkAccentTheme?, submitText: @escaping (String) -> Void) {
         if panel == nil {
             createPanel(accentTheme: accentTheme, submitText: submitText)
-        } else if let hostingView = panel?.contentView as? NSHostingView<BlinkTextModeInputView> {
+        } else if let hostingView = panel?.contentView as? BlinkTextModeHostingView {
             hostingView.rootView = BlinkTextModeInputView(
                 accentThemeOverride: accentTheme,
                 submitText: submitText,
@@ -12674,17 +12704,21 @@ private struct BlinkTextModeInputView: View {
                 .pointerCursor()
                 .disabled(!canSubmit)
 
-                Button(action: dismiss) {
+                Button(action: clearDraft) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundColor(controlColor.opacity(0.7))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .pointerCursor()
+                .disabled(!canClearDraft)
             }
 
             suggestionRow
         }
+        .onExitCommand(perform: dismiss)
         .padding(.horizontal, 12)
         .padding(.vertical, droppedAttachments.isEmpty ? 8 : 9)
         .frame(width: 520, height: preferredHeight)
@@ -12695,10 +12729,12 @@ private struct BlinkTextModeInputView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(accentTheme.cursorColor.opacity(0.08))
+                .allowsHitTesting(false)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(isDropTargeted ? accentTheme.cursorColor.opacity(0.65) : borderColor, lineWidth: isDropTargeted ? 1.2 : 0.8)
+                .allowsHitTesting(false)
         )
         .shadow(color: Color.black.opacity(0.18), radius: 14, x: 0, y: 8)
         .overlay(alignment: .center) {
@@ -12751,6 +12787,16 @@ private struct BlinkTextModeInputView: View {
 
     private var canSubmit: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !droppedAttachments.isEmpty
+    }
+
+    private var canClearDraft: Bool {
+        !text.isEmpty || !droppedAttachments.isEmpty
+    }
+
+    private func clearDraft() {
+        text = ""
+        droppedAttachments.removeAll()
+        focusTextField()
     }
 
     private func submit() {

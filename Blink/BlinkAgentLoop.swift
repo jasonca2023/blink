@@ -9,6 +9,7 @@
 //
 
 import AppKit
+import ApplicationServices
 import Combine
 import Foundation
 
@@ -480,6 +481,14 @@ final class BlinkAgentLoopController: ObservableObject {
             let x = input["x"] ?? "?"
             let y = input["y"] ?? "?"
             return "\(name) at (\(x), \(y))"
+        case "click_button":
+            let label = (input["label"] as? String) ?? "?"
+            let app = (input["app"] as? String).map { " in \($0)" } ?? ""
+            return "click_button: \"\(label)\"\(app)"
+        case "inspect_ui":
+            let query = (input["query"] as? String).map { " filter=\"\($0)\"" } ?? ""
+            let app = (input["app"] as? String).map { " in \($0)" } ?? ""
+            return "inspect_ui\(query)\(app)"
         case "type_text":
             let text = (input["text"] as? String) ?? ""
             return "type_text: \(text.prefix(80))"
@@ -504,16 +513,19 @@ Hard rules:
 - Do not output a final summary until at least one tool has actually executed and returned a result.
 - If the user asks you to do something, your first response MUST contain one or more tool calls. Plain text without tool calls is only allowed after the task is fully completed via tools.
 
-Workflow:
-1. If you need to see the screen, call screenshot first.
-2. Pick coordinates from what you see; coordinates are top-left origin in screen pixels.
-3. Open apps with open_app when the user names one. After open_app on a freshly-launched app, call wait_ms (about 800-1200 ms) before interacting.
-4. Type with type_text, press special keys with key_press.
-5. Only after all needed tool calls complete should you write a one-line confirmation.
+Workflow for clicking UI controls:
+1. ALWAYS try click_button(label, app?) first — it finds the control by its real accessibility label, no pixels needed.
+2. If click_button reports "no control matching", call inspect_ui(query?, app?) to list every clickable control on screen with its label and coordinates. Then call click_button again with the exact label you saw, or click_at with the listed coordinates.
+3. NEVER call click_at with coordinates you invented. Coordinates must come from inspect_ui or from a real screenshot the user supplied. Guessed pixels = clicks on empty space.
+4. Open apps with open_app when the user names one. open_app already waits for the app to be ready, so no extra wait_ms is needed unless typing into a freshly-opened sheet.
+5. Type with type_text, press special keys with key_press.
+6. Only after all needed tool calls complete should you write a one-line confirmation.
 
 Preferred composites (use these instead of building keystroke chains by hand):
-- web_search(query, browser?) — opens the browser, focuses the address bar, types the query (or URL), and hits return. Use for ANY weather/news/lookup/"google it" request.
+- web_search(query, browser?) — opens the browser at the URL or Google search. Use for ANY weather/news/lookup/"google it" request.
 - new_tab() — cmd+t in the frontmost browser.
+- click_button(label, app?) — clicks a UI control by its accessibility label. ALWAYS prefer this over click_at when the user names a control ("click Stop Sharing", "press Send", "hit OK", "start sharing screen"). Try multiple label phrasings if the first miss ("Share", "Share Screen", "Start Share").
+- inspect_ui(query?, app?) — lists clickable controls (button, menu item, link, etc.) with their labels and center coordinates. Call this BEFORE clicking when you don't know what's on screen.
 
 Concrete examples:
 - "open Safari and check the weather in Tokyo":
@@ -593,6 +605,30 @@ enum BlinkAgentToolCatalog {
                         "y": ["type": "number"]
                     ],
                     "required": ["x", "y"]
+                ]
+            ],
+            [
+                "name": "inspect_ui",
+                "description": "Returns a list of every clickable UI control (button, menu item, checkbox, radio, link, pop-up, tab) currently on screen for the target app, with role, label, and center coordinates. Call this when you don't know what's on screen, when click_button missed, or before deciding which click_at coordinates to use. Optionally filter labels with 'query' (case-insensitive substring). Results are capped at 60 elements.",
+                "input_schema": [
+                    "type": "object",
+                    "properties": [
+                        "query": ["type": "string", "description": "Optional substring filter on the visible label (case-insensitive)."],
+                        "app": ["type": "string", "description": "Optional app display name or bundle id. Defaults to the frontmost non-Blink app."]
+                    ]
+                ]
+            ],
+            [
+                "name": "click_button",
+                "description": "Click a button (or any labelled UI control) by its accessibility label. Use this INSTEAD OF click_at whenever the user names a control — e.g. 'click Stop Sharing' in Zoom, 'click Send' in Messages, 'click OK' in a dialog. Searches the focused window's accessibility tree (and optionally a named app) for a matching role (button, menu item, checkbox, radio, link, pop-up, tab). Invokes the AX press action directly when supported, otherwise clicks the element's center. Match is case-insensitive and accepts substrings.",
+                "input_schema": [
+                    "type": "object",
+                    "properties": [
+                        "label": ["type": "string", "description": "The visible label/title/description of the control, e.g. 'Stop Sharing', 'Send', 'OK'."],
+                        "app": ["type": "string", "description": "Optional app display name or bundle id to search inside (e.g. 'zoom.us'). Defaults to the frontmost non-Blink app."],
+                        "role": ["type": "string", "description": "Optional AX role hint: 'button', 'menu_item', 'checkbox', 'radio', 'link', 'popup', 'tab'. Leave blank to accept any clickable role."]
+                    ],
+                    "required": ["label"]
                 ]
             ],
             [
@@ -793,6 +829,10 @@ enum BlinkAgentToolExecutor {
                 try BlinkComputerUseMouseInput.click(at: point, button: .right)
                 return "Right-clicked at (\(Int(point.x)), \(Int(point.y)))."
             }
+        case "click_button":
+            return await clickButton(input: input)
+        case "inspect_ui":
+            return await inspectUI(input: input)
         case "scroll":
             let dx = (input["dx"] as? Int) ?? Int((input["dx"] as? Double) ?? 0)
             let dy = (input["dy"] as? Int) ?? Int((input["dy"] as? Double) ?? 0)
@@ -1099,6 +1139,66 @@ enum BlinkAgentToolExecutor {
             }?.processIdentifier
         }
         return AppReadinessResult(isReady: false, elapsedMs: elapsed, reason: lastReason, pid: pid)
+    }
+
+    private static func inspectUI(input: [String: Any]) async -> (status: String, detail: String) {
+        let appHint = (input["app"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = (input["query"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        let resolved = await MainActor.run { () -> (pid: pid_t?, appName: String) in
+            BlinkAgentAccessibilityClicker.resolveTargetPID(appHint: appHint)
+        }
+        guard let pid = resolved.pid else {
+            return ("error", "No target app found\(appHint.map { " for '\($0)'" } ?? "") and no non-Blink frontmost app.")
+        }
+
+        let elements = await MainActor.run { () -> [BlinkAgentAccessibilityClicker.InspectedElement] in
+            BlinkAgentAccessibilityClicker.inspect(pid: pid, query: query, limit: 60)
+        }
+
+        if elements.isEmpty {
+            let suffix = query.map { " matching '\($0)'" } ?? ""
+            return ("ok", "No clickable controls\(suffix) in \(resolved.appName). The app may not expose Accessibility info, or you may need to call screenshot to see the layout.")
+        }
+
+        var lines: [String] = ["\(elements.count) clickable control(s) in \(resolved.appName):"]
+        for element in elements {
+            lines.append("- \(element.role) \"\(element.label)\" @ (\(Int(element.center.x)), \(Int(element.center.y)))")
+        }
+        return ("ok", lines.joined(separator: "\n"))
+    }
+
+    private static func clickButton(input: [String: Any]) async -> (status: String, detail: String) {
+        guard let labelRaw = (input["label"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !labelRaw.isEmpty else {
+            return ("error", "click_button requires 'label'.")
+        }
+        let appHint = (input["app"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let roleHint = (input["role"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        let resolved = await MainActor.run { () -> (pid: pid_t?, appName: String) in
+            BlinkAgentAccessibilityClicker.resolveTargetPID(appHint: appHint)
+        }
+        guard let pid = resolved.pid else {
+            return ("error", "No target app found\(appHint.map { " for '\($0)'" } ?? "") and no non-Blink frontmost app.")
+        }
+
+        let outcome = await MainActor.run { () -> BlinkAgentAccessibilityClicker.Outcome in
+            BlinkAgentAccessibilityClicker.click(label: labelRaw, pid: pid, roleHint: roleHint)
+        }
+
+        switch outcome {
+        case .pressed(let role, let title):
+            return ("ok", "Pressed \(role) '\(title)' in \(resolved.appName).")
+        case .clicked(let role, let title, let point):
+            return ("ok", "Clicked \(role) '\(title)' in \(resolved.appName) at (\(Int(point.x)), \(Int(point.y))).")
+        case .notFound:
+            return ("error", "No control matching '\(labelRaw)' in \(resolved.appName). Try click_at after a screenshot, or refine the label.")
+        case .axDenied:
+            return ("error", "Accessibility permission denied. Grant Blink permission in System Settings → Privacy & Security → Accessibility.")
+        case .failed(let reason):
+            return ("error", "click_button failed: \(reason)")
+        }
     }
 
     @MainActor
@@ -1814,5 +1914,267 @@ enum BlinkAgentIntentRouter {
             }
         }
         return trimmed
+    }
+}
+
+// MARK: - Accessibility-based clicker
+
+/// Finds and invokes labelled UI controls (buttons, menu items, links, etc.)
+/// using AXUIElement traversal. Lets the agent click "Stop Sharing" in Zoom
+/// or "Send" in Messages without needing pixel coordinates or screenshots.
+enum BlinkAgentAccessibilityClicker {
+    enum Outcome {
+        case pressed(role: String, title: String)
+        case clicked(role: String, title: String, point: CGPoint)
+        case notFound
+        case axDenied
+        case failed(String)
+    }
+
+    struct InspectedElement {
+        let role: String
+        let label: String
+        let center: CGPoint
+    }
+
+    @MainActor
+    static func inspect(pid: pid_t, query: String?, limit: Int) -> [InspectedElement] {
+        guard AXIsProcessTrusted() else { return [] }
+        let appElement = AXUIElementCreateApplication(pid)
+        var roots: [AXUIElement] = []
+        if let focused = copyAXElement(appElement, kAXFocusedWindowAttribute as CFString) {
+            roots.append(focused)
+        }
+        for window in copyAXElementArray(appElement, kAXWindowsAttribute as CFString)
+            where !roots.contains(window) {
+            roots.append(window)
+        }
+        if roots.isEmpty { roots.append(appElement) }
+
+        let clickable = rolesForHint(nil)
+        var seen = Set<String>()
+        var results: [InspectedElement] = []
+        for root in roots {
+            traverse(root, depth: 0, maxDepth: 18) { element in
+                guard results.count < limit else { return }
+                guard let role = copyAXValue(element, kAXRoleAttribute) as? String,
+                      clickable.contains(role) else { return }
+                let labels: [String] = [
+                    copyAXValue(element, kAXTitleAttribute) as? String,
+                    copyAXValue(element, kAXDescriptionAttribute) as? String,
+                    copyAXValue(element, kAXHelpAttribute) as? String,
+                    copyAXValue(element, "AXLabel" as CFString) as? String,
+                    copyAXValue(element, kAXValueAttribute) as? String
+                ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                guard let label = labels.first else { return }
+                if let query, !query.isEmpty, !label.lowercased().contains(query) { return }
+                guard let frame = elementFrame(element), frame.width > 0, frame.height > 0 else { return }
+                let key = "\(role)|\(label)|\(Int(frame.midX))|\(Int(frame.midY))"
+                if seen.contains(key) { return }
+                seen.insert(key)
+                results.append(InspectedElement(
+                    role: role,
+                    label: label,
+                    center: CGPoint(x: frame.midX, y: frame.midY)
+                ))
+            }
+            if results.count >= limit { break }
+        }
+        return results
+    }
+
+    @MainActor
+    static func resolveTargetPID(appHint: String?) -> (pid: pid_t?, appName: String) {
+        let workspace = NSWorkspace.shared
+        if let hint = appHint?.lowercased(), !hint.isEmpty {
+            if let match = workspace.runningApplications.first(where: {
+                if let bid = $0.bundleIdentifier?.lowercased(), bid == hint { return true }
+                if let name = $0.localizedName?.lowercased(), name == hint || name.contains(hint) { return true }
+                return false
+            }) {
+                match.activate(options: [.activateAllWindows])
+                return (match.processIdentifier, match.localizedName ?? hint)
+            }
+            return (nil, hint)
+        }
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        if let front = workspace.frontmostApplication, front.processIdentifier != ownPID {
+            return (front.processIdentifier, front.localizedName ?? "frontmost app")
+        }
+        if let first = workspace.runningApplications.first(where: {
+            $0.activationPolicy == .regular && $0.processIdentifier != ownPID
+        }) {
+            return (first.processIdentifier, first.localizedName ?? "running app")
+        }
+        return (nil, "(none)")
+    }
+
+    @MainActor
+    static func click(label: String, pid: pid_t, roleHint: String?) -> Outcome {
+        guard AXIsProcessTrusted() else { return .axDenied }
+        let appElement = AXUIElementCreateApplication(pid)
+
+        // Prefer focused window, but fall back to all windows so menu-bar
+        // or sheet controls are still reachable.
+        var roots: [AXUIElement] = []
+        if let focused = copyAXElement(appElement, kAXFocusedWindowAttribute as CFString) {
+            roots.append(focused)
+        }
+        for window in copyAXElementArray(appElement, kAXWindowsAttribute as CFString)
+            where !roots.contains(window) {
+            roots.append(window)
+        }
+        if roots.isEmpty { roots.append(appElement) }
+
+        let needle = label.lowercased()
+        let allowedRoles = rolesForHint(roleHint)
+
+        var best: (element: AXUIElement, role: String, title: String, score: Int)?
+        for root in roots {
+            traverse(root, depth: 0, maxDepth: 18) { element in
+                guard let role = copyAXValue(element, kAXRoleAttribute) as? String,
+                      allowedRoles.contains(role) || allowedRoles.isEmpty else { return }
+                let candidates: [String] = [
+                    copyAXValue(element, kAXTitleAttribute) as? String,
+                    copyAXValue(element, kAXDescriptionAttribute) as? String,
+                    copyAXValue(element, kAXHelpAttribute) as? String,
+                    copyAXValue(element, kAXValueAttribute) as? String,
+                    copyAXValue(element, "AXLabel" as CFString) as? String
+                ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                for candidate in candidates {
+                    let lower = candidate.lowercased()
+                    let score: Int
+                    if lower == needle { score = 1000 }
+                    else if lower.hasPrefix(needle) || needle.hasPrefix(lower) { score = 500 }
+                    else if lower.contains(needle) || needle.contains(lower) { score = 200 }
+                    else { continue }
+                    if best == nil || score > best!.score {
+                        best = (element, role, candidate, score)
+                    }
+                }
+            }
+            if let best, best.score >= 1000 { break }
+        }
+
+        guard let hit = best else { return .notFound }
+
+        let actionNames = (copyActionNames(hit.element) ?? []).map { $0 as String }
+        if actionNames.contains(kAXPressAction as String) {
+            let err = AXUIElementPerformAction(hit.element, kAXPressAction as CFString)
+            if err == .success {
+                return .pressed(role: hit.role, title: hit.title)
+            }
+        }
+
+        guard let frame = elementFrame(hit.element) else {
+            return .failed("found '\(hit.title)' but could not read its bounds")
+        }
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        do {
+            try BlinkComputerUseMouseInput.move(to: center, smoothly: true)
+            try BlinkComputerUseMouseInput.click(at: center)
+            return .clicked(role: hit.role, title: hit.title, point: center)
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    private static func rolesForHint(_ hint: String?) -> Set<String> {
+        let allClickable: Set<String> = [
+            kAXButtonRole, kAXMenuItemRole, kAXCheckBoxRole, kAXRadioButtonRole,
+            kAXPopUpButtonRole, kAXTabGroupRole, kAXMenuButtonRole,
+            kAXDisclosureTriangleRole, "AXTab", "AXLink", "AXSwitch"
+        ]
+        guard let hint, !hint.isEmpty else { return allClickable }
+        switch hint {
+        case "button": return [kAXButtonRole, kAXMenuButtonRole]
+        case "menu_item", "menuitem", "menu": return [kAXMenuItemRole]
+        case "checkbox": return [kAXCheckBoxRole]
+        case "radio": return [kAXRadioButtonRole]
+        case "link": return ["AXLink"]
+        case "popup", "pop_up", "popupbutton": return [kAXPopUpButtonRole]
+        case "tab": return ["AXTab", kAXTabGroupRole]
+        default: return allClickable
+        }
+    }
+
+    private static func traverse(_ element: AXUIElement, depth: Int, maxDepth: Int, visit: (AXUIElement) -> Void) {
+        visit(element)
+        guard depth < maxDepth else { return }
+        let childAttrs: [CFString] = [
+            kAXChildrenAttribute as CFString,
+            "AXVisibleChildren" as CFString
+        ]
+        for attr in childAttrs {
+            for child in copyAXElementArray(element, attr) {
+                traverse(child, depth: depth + 1, maxDepth: maxDepth, visit: visit)
+            }
+        }
+    }
+
+    private static func copyAXElement(_ element: AXUIElement, _ attribute: CFString) -> AXUIElement? {
+        var value: CFTypeRef?
+        let err = AXUIElementCopyAttributeValue(element, attribute, &value)
+        guard err == .success,
+              let value,
+              CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return (value as! AXUIElement) // safe: TypeID checked above
+    }
+
+    private static func copyAXElementArray(_ element: AXUIElement, _ attribute: CFString) -> [AXUIElement] {
+        var value: CFTypeRef?
+        let err = AXUIElementCopyAttributeValue(element, attribute, &value)
+        guard err == .success,
+              let value,
+              CFGetTypeID(value) == CFArrayGetTypeID() else { return [] }
+        let array = value as! CFArray // safe: TypeID checked above
+        let count = CFArrayGetCount(array)
+        var result: [AXUIElement] = []
+        result.reserveCapacity(count)
+        for i in 0..<count {
+            guard let raw = CFArrayGetValueAtIndex(array, i) else { continue }
+            let element = Unmanaged<AXUIElement>.fromOpaque(raw).takeUnretainedValue()
+            result.append(element)
+        }
+        return result
+    }
+
+    private static func copyAXValue(_ element: AXUIElement, _ attribute: String) -> AnyObject? {
+        copyAXValue(element, attribute as CFString)
+    }
+
+    private static func copyAXValue(_ element: AXUIElement, _ attribute: CFString) -> AnyObject? {
+        var value: CFTypeRef?
+        let err = AXUIElementCopyAttributeValue(element, attribute, &value)
+        guard err == .success, let value else { return nil }
+        return value as AnyObject
+    }
+
+    private static func copyActionNames(_ element: AXUIElement) -> [String]? {
+        var names: CFArray?
+        let err = AXUIElementCopyActionNames(element, &names)
+        guard err == .success, let names else { return nil }
+        return names as? [String]
+    }
+
+    private static func elementFrame(_ element: AXUIElement) -> CGRect? {
+        var positionRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionRef) == .success,
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success,
+              let positionRef, let sizeRef,
+              CFGetTypeID(positionRef) == AXValueGetTypeID(),
+              CFGetTypeID(sizeRef) == AXValueGetTypeID() else {
+            return nil
+        }
+        var origin = CGPoint.zero
+        var size = CGSize.zero
+        let positionValue = positionRef as! AXValue
+        let sizeValue = sizeRef as! AXValue
+        guard AXValueGetValue(positionValue, .cgPoint, &origin),
+              AXValueGetValue(sizeValue, .cgSize, &size) else { return nil }
+        return CGRect(origin: origin, size: size)
     }
 }
