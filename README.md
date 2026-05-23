@@ -1,4 +1,4 @@
-# Blink
+# Blink suck by butcheeck
 
 Blink is a native macOS menu-bar app that turns your cursor into a voice- and text-driven assistant. Hold ctrl+option to push-to-talk or double-tap ctrl to type. Blink captures your screen, understands what you're looking at, replies in voice, and can drive the UI on your behalf — click buttons, open apps, run searches, fill in text — through the macOS Accessibility tree (no pixel guessing).
 
