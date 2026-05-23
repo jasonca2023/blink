@@ -134,8 +134,8 @@ final class MenuBarPanelManager: NSObject {
     /// permissions and the start button right away.
     func showPanelOnLaunch() {
         // Small delay so the status item has time to appear in the menu bar
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            self.showPanel()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.showPanel()
         }
     }
 

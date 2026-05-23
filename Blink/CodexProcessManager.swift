@@ -296,7 +296,11 @@ final class CodexProcessManager: @unchecked Sendable {
     private func handleStdoutLine(_ line: String) {
         guard let data = line.data(using: .utf8) else { return }
         do {
-            guard let message = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+            let parsed = try JSONSerialization.jsonObject(with: data)
+            guard let message = parsed as? [String: Any] else {
+                onStderrLine?("Codex RPC: unexpected non-object response: \(line.prefix(200))")
+                return
+            }
             BlinkMessageLogStore.shared.append(
                 lane: "agent",
                 direction: "incoming",

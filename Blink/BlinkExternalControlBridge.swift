@@ -72,12 +72,14 @@ final class BlinkExternalControlBridgeServer: @unchecked Sendable {
             listener.newConnectionHandler = { [weak self] connection in
                 self?.handleNewConnection(connection)
             }
-            listener.stateUpdateHandler = { state in
+            let port = self.port
+            listener.stateUpdateHandler = { [weak self] state in
                 switch state {
                 case .ready:
-                    print("Blink external control bridge listening on http://127.0.0.1:\(self.port)")
+                    print("Blink external control bridge listening on http://127.0.0.1:\(port)")
                 case .failed(let error):
                     print("Blink external control bridge failed: \(error)")
+                    self?.listener = nil
                 default:
                     break
                 }
@@ -92,10 +94,13 @@ final class BlinkExternalControlBridgeServer: @unchecked Sendable {
     func stop() {
         listener?.cancel()
         listener = nil
-        for (_, connection) in sseConnections {
-            connection.cancel()
+        queue.async { [weak self] in
+            guard let self else { return }
+            for (_, connection) in self.sseConnections {
+                connection.cancel()
+            }
+            self.sseConnections.removeAll()
         }
-        sseConnections.removeAll()
     }
 
     private func handleNewConnection(_ connection: NWConnection) {

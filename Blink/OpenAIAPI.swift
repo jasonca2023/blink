@@ -471,6 +471,68 @@ class OpenAIAPI {
         return nil
     }
 
+    /// One-shot tool-calling turn through the Chat Completions API (/v1/chat/completions).
+    /// Tools must be in chat completions format: {"type":"function","function":{"name":...,"description":...,"parameters":...}}
+    /// Messages must NOT include the system message (passed separately via systemPrompt).
+    func runChatCompletionsTurn(
+        systemPrompt: String,
+        messages: [[String: Any]],
+        tools: [[String: Any]]
+    ) async throws -> ToolCall? {
+        guard let apiKey, !apiKey.isEmpty else {
+            throw NSError(
+                domain: "OpenAIAPI",
+                code: -1000,
+                userInfo: [NSLocalizedDescriptionKey: "OpenAI is not configured."]
+            )
+        }
+
+        let chatURL = URL(string: "https://api.openai.com/v1/chat/completions")!
+        var request = URLRequest(url: chatURL)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 45
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        var allMessages: [[String: Any]] = [["role": "system", "content": systemPrompt]]
+        allMessages.append(contentsOf: messages)
+
+        let body: [String: Any] = [
+            "model": model,
+            "messages": allMessages,
+            "tools": tools,
+            "tool_choice": "required"
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let bodyText = String(data: data, encoding: .utf8) ?? ""
+            throw NSError(
+                domain: "OpenAIAPI",
+                code: (response as? HTTPURLResponse)?.statusCode ?? -1,
+                userInfo: [NSLocalizedDescriptionKey: "Chat completions error: \(bodyText)"]
+            )
+        }
+
+        guard
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let choices = json["choices"] as? [[String: Any]],
+            let first = choices.first,
+            let message = first["message"] as? [String: Any],
+            let toolCalls = message["tool_calls"] as? [[String: Any]],
+            let toolCall = toolCalls.first,
+            let fn = toolCall["function"] as? [String: Any],
+            let name = fn["name"] as? String,
+            let argsString = fn["arguments"] as? String
+        else { return nil }
+
+        let callID = (toolCall["id"] as? String) ?? UUID().uuidString
+        let argsData = Data(argsString.utf8)
+        let arguments = (try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]) ?? [:]
+        return ToolCall(name: name, arguments: arguments, callID: callID, argumentsJSON: argsString)
+    }
+
     private static func extractOutputText(from json: [String: Any]) -> String {
         if let outputText = json["output_text"] as? String {
             return outputText

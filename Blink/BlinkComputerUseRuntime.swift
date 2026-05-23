@@ -1021,7 +1021,7 @@ enum BlinkComputerUseMouseInput {
             let startLocation = NSEvent.mouseLocation
             let startPoint = CGPoint(
                 x: startLocation.x,
-                y: (NSScreen.screens.first?.frame.height ?? startLocation.y) - startLocation.y
+                y: (NSScreen.main?.frame.height ?? startLocation.y) - startLocation.y
             )
             let steps = max(2, min(60, durationMilliseconds / 12))
             let perStepDelayMicros = UInt32(max(1, durationMilliseconds * 1_000 / steps))
@@ -1051,9 +1051,15 @@ enum BlinkComputerUseMouseInput {
         let types = button.eventTypes()
         let count = max(1, min(3, clickCount))
 
+        // A session-state source lets the window server inherit current
+        // modifier flags and event number sequences, which is required for
+        // synthetic clicks to reach app event queues on macOS 14+. nil source
+        // causes the WS to silently drop down/up pairs on many targets.
+        let source = CGEventSource(stateID: .combinedSessionState)
+
         for i in 0..<count {
             guard let down = CGEvent(
-                mouseEventSource: nil,
+                mouseEventSource: source,
                 mouseType: types.down,
                 mouseCursorPosition: targetPoint,
                 mouseButton: button.cg
@@ -1061,10 +1067,17 @@ enum BlinkComputerUseMouseInput {
                 throw BlinkComputerUseError.eventCreationFailed("mouse down at \(targetPoint)")
             }
             down.setIntegerValueField(.mouseEventClickState, value: Int64(i + 1))
-            down.post(tap: .cghidEventTap)
+            // .cgAnnotatedSessionEventTap routes through the window server's
+            // event dispatch (correct for app-targeted clicks).
+            // .cghidEventTap is for raw HID injection and skips WS dispatch.
+            down.post(tap: .cgAnnotatedSessionEventTap)
+
+            // Apps (especially Electron/web views) need ≥50 ms dwell on
+            // mouseDown before they register a click.
+            usleep(50_000)
 
             guard let up = CGEvent(
-                mouseEventSource: nil,
+                mouseEventSource: source,
                 mouseType: types.up,
                 mouseCursorPosition: targetPoint,
                 mouseButton: button.cg
@@ -1072,7 +1085,7 @@ enum BlinkComputerUseMouseInput {
                 throw BlinkComputerUseError.eventCreationFailed("mouse up at \(targetPoint)")
             }
             up.setIntegerValueField(.mouseEventClickState, value: Int64(i + 1))
-            up.post(tap: .cghidEventTap)
+            up.post(tap: .cgAnnotatedSessionEventTap)
 
             if i < count - 1 {
                 usleep(80_000) // ~80ms between clicks in a multi-click sequence
@@ -1110,7 +1123,7 @@ enum BlinkComputerUseMouseInput {
     private static func resolvedPoint(_ point: CGPoint?) throws -> CGPoint {
         if let point { return point }
         let location = NSEvent.mouseLocation
-        let height = NSScreen.screens.first?.frame.height ?? location.y
+        let height = NSScreen.main?.frame.height ?? location.y
         return CGPoint(x: location.x, y: height - location.y)
     }
 }

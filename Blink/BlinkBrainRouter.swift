@@ -31,34 +31,32 @@ final class BlinkBrainRouter {
         guard !trimmed.isEmpty else { return false }
 
         let systemPrompt = Self.systemPrompt
-        let tools = Self.tools
+        let tools = Self.chatTools
 
-        // Seed the conversation with the user's request and the initial
-        // screenshot so the model can see the starting state.
-        var input: [[String: Any]] = []
+        // Seed conversation with user's request + initial screenshot (chat completions format).
         var userContent: [[String: Any]] = [[
-            "type": "input_text",
+            "type": "text",
             "text": trimmed
         ]]
         if let screenshot = await companionManager?.brainCaptureScreenshot() {
             userContent.append([
-                "type": "input_image",
-                "image_url": "data:image/jpeg;base64,\(screenshot.base64EncodedString())"
+                "type": "image_url",
+                "image_url": ["url": "data:image/jpeg;base64,\(screenshot.base64EncodedString())"]
             ])
         }
-        input.append([
+        var messages: [[String: Any]] = [[
             "role": "user",
             "content": userContent
-        ])
+        ]]
 
         var didDispatchAtLeastOneTool = false
 
         for step in 0..<Self.maxSteps {
             let toolCall: OpenAIAPI.ToolCall?
             do {
-                toolCall = try await openAIAPI.runToolLoopStep(
+                toolCall = try await openAIAPI.runChatCompletionsTurn(
                     systemPrompt: systemPrompt,
-                    input: input,
+                    messages: messages,
                     tools: tools
                 )
             } catch {
@@ -67,12 +65,9 @@ final class BlinkBrainRouter {
             }
 
             guard let toolCall else {
-                // Model emitted only text — stop. Already-dispatched
-                // tools count as a successful turn.
                 return didDispatchAtLeastOneTool
             }
 
-            // finish_task ends the loop cleanly.
             if toolCall.name == "finish_task" {
                 let summary = (toolCall.arguments["summary"] as? String) ?? ""
                 if !summary.isEmpty {
@@ -84,36 +79,35 @@ final class BlinkBrainRouter {
             let dispatchResult = dispatch(toolCall: toolCall, transcript: trimmed, isFinalStep: false)
             didDispatchAtLeastOneTool = didDispatchAtLeastOneTool || dispatchResult.handled
 
-            // speak_answer / run_background_agent / web_search are terminal
-            // — no follow-up screenshot makes sense, so end the loop here.
             if dispatchResult.isTerminal {
                 return true
             }
 
-            // Record the function call + a synthetic output so the model
-            // can ground the next step against the prior decision.
-            input.append([
-                "type": "function_call",
-                "call_id": toolCall.callID,
-                "name": toolCall.name,
-                "arguments": toolCall.argumentsJSON
+            // Append assistant tool_calls + tool result in chat completions format.
+            messages.append([
+                "role": "assistant",
+                "tool_calls": [[
+                    "id": toolCall.callID,
+                    "type": "function",
+                    "function": [
+                        "name": toolCall.name,
+                        "arguments": toolCall.argumentsJSON
+                    ]
+                ]]
             ])
-            input.append([
-                "type": "function_call_output",
-                "call_id": toolCall.callID,
-                "output": dispatchResult.handled ? "ok" : "failed"
+            messages.append([
+                "role": "tool",
+                "tool_call_id": toolCall.callID,
+                "content": dispatchResult.handled ? "ok" : "failed"
             ])
 
-            // Wait for the UI to settle (page load, animation, app
-            // launch) before capturing a fresh screenshot for the next
-            // step.
             try? await Task.sleep(nanoseconds: Self.postActionDelayNanoseconds)
             if let nextScreenshot = await companionManager?.brainCaptureScreenshot() {
-                input.append([
+                messages.append([
                     "role": "user",
                     "content": [[
-                        "type": "input_image",
-                        "image_url": "data:image/jpeg;base64,\(nextScreenshot.base64EncodedString())"
+                        "type": "image_url",
+                        "image_url": ["url": "data:image/jpeg;base64,\(nextScreenshot.base64EncodedString())"]
                     ]]
                 ])
             }
@@ -179,8 +173,15 @@ final class BlinkBrainRouter {
             guard let query = toolCall.arguments["query"] as? String, !query.isEmpty else {
                 return DispatchResult(handled: false, isTerminal: true)
             }
-            let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            guard let url = URL(string: "https://www.google.com/search?q=\(encoded)") else {
+            let targetURL: URL?
+            if let direct = URL(string: query),
+               direct.scheme == "https" || direct.scheme == "http" {
+                targetURL = direct
+            } else {
+                let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+                targetURL = URL(string: "https://www.google.com/search?q=\(encoded)")
+            }
+            guard let url = targetURL else {
                 return DispatchResult(handled: false, isTerminal: true)
             }
             NSWorkspace.shared.open(url)
@@ -260,127 +261,145 @@ final class BlinkBrainRouter {
     finish_task.summary: COMPLETE sentence ending in punctuation. Never end with ellipsis or a fragment.
     """
 
-    private static let tools: [[String: Any]] = [
+    private static let chatTools: [[String: Any]] = [
         [
             "type": "function",
-            "name": "open_url",
-            "description": "Open a fully-qualified URL in the default browser. Infer the URL from brand names if needed.",
-            "parameters": [
-                "type": "object",
-                "properties": [
-                    "url": ["type": "string"],
-                    "display_name": ["type": "string"]
-                ],
-                "required": ["url"],
-                "additionalProperties": false
+            "function": [
+                "name": "open_url",
+                "description": "Open a fully-qualified URL in the default browser. Infer the URL from brand names if needed.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "url": ["type": "string"],
+                        "display_name": ["type": "string"]
+                    ],
+                    "required": ["url"],
+                    "additionalProperties": false
+                ]
             ]
         ],
         [
             "type": "function",
-            "name": "open_app",
-            "description": "Launch a native macOS application by name.",
-            "parameters": [
-                "type": "object",
-                "properties": [
-                    "app": ["type": "string"]
-                ],
-                "required": ["app"],
-                "additionalProperties": false
+            "function": [
+                "name": "open_app",
+                "description": "Launch a native macOS application by name.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "app": ["type": "string"]
+                    ],
+                    "required": ["app"],
+                    "additionalProperties": false
+                ]
             ]
         ],
         [
             "type": "function",
-            "name": "press_keys",
-            "description": "Post a macOS keyboard shortcut via CGEvent. Combo is '+'-separated lowercase tokens, e.g. 'cmd+shift+m'.",
-            "parameters": [
-                "type": "object",
-                "properties": [
-                    "combo": ["type": "string"]
-                ],
-                "required": ["combo"],
-                "additionalProperties": false
+            "function": [
+                "name": "press_keys",
+                "description": "Post a macOS keyboard shortcut via CGEvent. Combo is '+'-separated lowercase tokens, e.g. 'cmd+shift+m'.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "combo": ["type": "string"]
+                    ],
+                    "required": ["combo"],
+                    "additionalProperties": false
+                ]
             ]
         ],
         [
             "type": "function",
-            "name": "click_at",
-            "description": "Click at screen coordinates grounded against the supplied screenshot.",
-            "parameters": [
-                "type": "object",
-                "properties": [
-                    "x": ["type": "number"],
-                    "y": ["type": "number"],
-                    "label": ["type": "string"]
-                ],
-                "required": ["x", "y", "label"],
-                "additionalProperties": false
+            "function": [
+                "name": "click_at",
+                "description": "Click at screen coordinates grounded against the supplied screenshot.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "x": ["type": "number"],
+                        "y": ["type": "number"],
+                        "label": ["type": "string"]
+                    ],
+                    "required": ["x", "y", "label"],
+                    "additionalProperties": false
+                ]
             ]
         ],
         [
             "type": "function",
-            "name": "type_text",
-            "description": "Type literal text into the focused field via CGEvent keystrokes.",
-            "parameters": [
-                "type": "object",
-                "properties": [
-                    "text": ["type": "string"]
-                ],
-                "required": ["text"],
-                "additionalProperties": false
+            "function": [
+                "name": "type_text",
+                "description": "Type literal text into the focused field via CGEvent keystrokes.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "text": ["type": "string"]
+                    ],
+                    "required": ["text"],
+                    "additionalProperties": false
+                ]
             ]
         ],
         [
             "type": "function",
-            "name": "speak_answer",
-            "description": "Speak a short conversational reply aloud. Optionally show a centered translucent panel with a topical photo when needs_visual=true.",
-            "parameters": [
-                "type": "object",
-                "properties": [
-                    "text": ["type": "string"],
-                    "needs_visual": ["type": "boolean"],
-                    "image_topic": ["type": "string"]
-                ],
-                "required": ["text", "needs_visual"],
-                "additionalProperties": false
+            "function": [
+                "name": "speak_answer",
+                "description": "Speak a short conversational reply aloud. Optionally show a centered translucent panel with a topical photo when needs_visual=true.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "text": ["type": "string"],
+                        "needs_visual": ["type": "boolean"],
+                        "image_topic": ["type": "string"]
+                    ],
+                    "required": ["text", "needs_visual"],
+                    "additionalProperties": false
+                ]
             ]
         ],
         [
             "type": "function",
-            "name": "run_background_agent",
-            "description": "Spawn a background Codex agent. REQUIRED for any coding, scripting, refactoring, building, debugging, file editing, content writing, or multi-step research task — anything the user would otherwise type into an editor or terminal. Use this instead of opening Terminal/Xcode/Cursor and driving them via keystrokes. The instruction string is handed directly to the background agent.",
-            "parameters": [
-                "type": "object",
-                "properties": [
-                    "instruction": ["type": "string"]
-                ],
-                "required": ["instruction"],
-                "additionalProperties": false
+            "function": [
+                "name": "run_background_agent",
+                "description": "Spawn a background Codex agent. REQUIRED for any coding, scripting, refactoring, building, debugging, file editing, content writing, or multi-step research task — anything the user would otherwise type into an editor or terminal. Use this instead of opening Terminal/Xcode/Cursor and driving them via keystrokes. The instruction string is handed directly to the background agent.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "instruction": ["type": "string"]
+                    ],
+                    "required": ["instruction"],
+                    "additionalProperties": false
+                ]
             ]
         ],
         [
             "type": "function",
-            "name": "web_search",
-            "description": "Open Google search for an explicit search query.",
-            "parameters": [
-                "type": "object",
-                "properties": [
-                    "query": ["type": "string"]
-                ],
-                "required": ["query"],
-                "additionalProperties": false
+            "function": [
+                "name": "web_search",
+                "description": "Open Google search for an explicit search query.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "query": ["type": "string"]
+                    ],
+                    "required": ["query"],
+                    "additionalProperties": false
+                ]
             ]
         ],
         [
             "type": "function",
-            "name": "finish_task",
-            "description": "End the task. Always call when the user's goal is achieved.",
-            "parameters": [
-                "type": "object",
-                "properties": [
-                    "summary": ["type": "string", "description": "4-10 word spoken summary of what got done"]
-                ],
-                "required": ["summary"],
-                "additionalProperties": false
+            "function": [
+                "name": "finish_task",
+                "description": "End the task. Always call when the user's goal is achieved.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "summary": ["type": "string", "description": "4-10 word spoken summary of what got done"]
+                    ],
+                    "required": ["summary"],
+                    "additionalProperties": false
+                ]
             ]
         ]
     ]

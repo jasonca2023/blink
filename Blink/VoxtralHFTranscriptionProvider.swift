@@ -133,8 +133,9 @@ private final class VoxtralHFTranscriptionSession: BuddyStreamingTranscriptionSe
         stateQueue.async {
             self.isCancelled = true
             self.bufferedPCM16AudioData.removeAll(keepingCapacity: false)
+            self.transcriptionUploadTask?.cancel()
+            self.transcriptionUploadTask = nil
         }
-        transcriptionUploadTask?.cancel()
         urlSession.invalidateAndCancel()
     }
 
@@ -222,8 +223,12 @@ private final class VoxtralHFTranscriptionSession: BuddyStreamingTranscriptionSe
     }
 
     private func deliverFinalTranscript(_ text: String) {
-        guard !hasDeliveredFinalTranscript else { return }
-        hasDeliveredFinalTranscript = true
+        let shouldDeliver = stateQueue.sync {
+            guard !hasDeliveredFinalTranscript, !isCancelled else { return false }
+            hasDeliveredFinalTranscript = true
+            return true
+        }
+        guard shouldDeliver else { return }
         onFinalTranscriptReady(text)
     }
 
@@ -235,7 +240,7 @@ private final class VoxtralHFTranscriptionSession: BuddyStreamingTranscriptionSe
 
 private extension Data {
     mutating func appendVoxtralString(_ string: String) {
-        append(string.data(using: .utf8)!)
+        append(string.data(using: .utf8) ?? Data())
     }
 
     mutating func appendVoxtralFormField(name: String, value: String, boundary: String) {

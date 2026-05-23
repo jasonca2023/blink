@@ -167,12 +167,7 @@ struct BlinkCodexConfigTemplate: Equatable {
     }
 
     private var preferredAuthMethod: String {
-        switch backendKind {
-        case .openAI:
-            return BlinkCodexBackend.isDefaultOpenAIBaseURL(workerBaseURL) ? "chatgpt" : "apikey"
-        case .huggingFace:
-            return "apikey"
-        }
+        return "apikey"
     }
 
     private func normalizedOptionalString(_ value: String?) -> String? {

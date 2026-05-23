@@ -40,7 +40,9 @@ final class WikiRuntimeManager {
     }
 
     static func defaultWikiRoot(fileManager: FileManager = .default) -> URL {
-        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/Blink/wiki", isDirectory: true)
+        }
         return appSupport.appendingPathComponent("Blink", isDirectory: true)
             .appendingPathComponent("wiki", isDirectory: true)
     }

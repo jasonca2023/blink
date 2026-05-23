@@ -277,6 +277,14 @@ final class BlinkAgentLoopController: ObservableObject {
                     self.append(.init(kind: .toolCall(name: name, argumentsJSON: pretty), text: name))
                 }
 
+                if name == "finish_task" {
+                    let summary = (input["summary"] as? String) ?? "Task complete."
+                    await MainActor.run {
+                        self.append(.init(kind: .toolResult(name: name, status: "ok", detail: summary), text: name))
+                    }
+                    return
+                }
+
                 if let destructive = BlinkAgentToolCatalog.destructiveReason(for: name, input: input) {
                     let approved = await requestApproval(for: name, input: input, reason: destructive)
                     if !approved {
@@ -305,9 +313,11 @@ final class BlinkAgentLoopController: ObservableObject {
     }
 
     private func waitWhilePaused() async {
-        while isPaused, !Task.isCancelled {
+        let deadline = Date().addingTimeInterval(300)
+        while isPaused, !Task.isCancelled, Date() < deadline {
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
+        if isPaused { stop() }
     }
 
     // MARK: - HuggingFace loop (OpenAI-compatible chat completions via HF router)
@@ -391,6 +401,12 @@ final class BlinkAgentLoopController: ObservableObject {
                 let pretty = (try? JSONSerialization.data(withJSONObject: input, options: [.prettyPrinted, .sortedKeys]))
                     .flatMap { String(data: $0, encoding: .utf8) } ?? call.rawArgumentsJSON
                 self.append(.init(kind: .toolCall(name: call.name, argumentsJSON: pretty), text: call.name))
+
+                if call.name == "finish_task" {
+                    let summary = (input["summary"] as? String) ?? "Task complete."
+                    self.append(.init(kind: .toolResult(name: call.name, status: "ok", detail: summary), text: call.name))
+                    return
+                }
 
                 if let destructive = BlinkAgentToolCatalog.destructiveReason(for: call.name, input: input) {
                     let approved = await requestApproval(for: call.name, input: input, reason: destructive)
@@ -512,34 +528,44 @@ Hard rules:
 - Never claim to have done something you did not perform via a tool call in this conversation.
 - Do not output a final summary until at least one tool has actually executed and returned a result.
 - If the user asks you to do something, your first response MUST contain one or more tool calls. Plain text without tool calls is only allowed after the task is fully completed via tools.
+- Call finish_task(summary=...) exactly once when everything is done. Never call it mid-task.
+
+Navigation rules (READ CAREFULLY — most agent mistakes happen here):
+- To open a URL or search the web: ALWAYS use web_search(query). It opens the browser directly via the OS — no typing, no new tabs, no address bar interaction. ONE call is enough.
+- NEVER call new_tab() to navigate somewhere. new_tab() is ONLY for when the user explicitly says "open a new tab". Using new_tab() + type_text() to navigate is WRONG and will open many unwanted tabs.
+- NEVER type into the browser address bar manually. web_search() handles all navigation.
+- If you already called web_search() once, do NOT call it again for the same destination. Trust that it worked and call finish_task().
+
+Searching within a website (YouTube, Google Maps, Reddit, etc.):
+- Do NOT open a new tab and type a search URL. Use the site's own search bar instead.
+- Workflow: inspect_ui(query="search") → find the search field → click_at its coordinates → type_text(text="your query") → key_press(key="Return") → finish_task().
+- Example: "search for cats on YouTube" → inspect_ui(query="search") → click_at(x=..., y=...) → type_text(text="cats") → key_press(key="Return") → finish_task().
 
 Workflow for clicking UI controls:
 1. ALWAYS try click_button(label, app?) first — it finds the control by its real accessibility label, no pixels needed.
 2. If click_button reports "no control matching", call inspect_ui(query?, app?) to list every clickable control on screen with its label and coordinates. Then call click_button again with the exact label you saw, or click_at with the listed coordinates.
-3. NEVER call click_at with coordinates you invented. Coordinates must come from inspect_ui or from a real screenshot the user supplied. Guessed pixels = clicks on empty space.
-4. Open apps with open_app when the user names one. open_app already waits for the app to be ready, so no extra wait_ms is needed unless typing into a freshly-opened sheet.
+3. NEVER call click_at with coordinates you invented. Coordinates must come from inspect_ui or a screenshot. Guessed pixels = clicks on empty space.
+4. Open apps with open_app. It already waits for the app to be ready.
 5. Type with type_text, press special keys with key_press.
-6. Only after all needed tool calls complete should you write a one-line confirmation.
+6. Call finish_task() once everything is done.
 
-Preferred composites (use these instead of building keystroke chains by hand):
-- web_search(query, browser?) — opens the browser at the URL or Google search. Use for ANY weather/news/lookup/"google it" request.
-- new_tab() — cmd+t in the frontmost browser.
-- click_button(label, app?) — clicks a UI control by its accessibility label. ALWAYS prefer this over click_at when the user names a control ("click Stop Sharing", "press Send", "hit OK", "start sharing screen"). Try multiple label phrasings if the first miss ("Share", "Share Screen", "Start Share").
-- inspect_ui(query?, app?) — lists clickable controls (button, menu item, link, etc.) with their labels and center coordinates. Call this BEFORE clicking when you don't know what's on screen.
+Tool quick reference:
+- web_search(query, browser?) — ONE call opens the browser at the URL or Google search. Use for ALL web navigation and lookup.
+- new_tab() — ONLY when user explicitly says "new tab". Never use this for navigation.
+- click_button(label, app?) — clicks a UI control by accessibility label. Always try before click_at.
+- inspect_ui(query?, app?) — lists clickable controls with labels and coordinates. Use before clicking unknown UI.
+- finish_task(summary) — call exactly once when the task is complete.
 
 Concrete examples:
-- "open Safari and check the weather in Tokyo":
-    web_search(query="weather tokyo", browser="Safari") → done.
-- "search for cute dogs":
-    web_search(query="cute dogs") → done.
-- "go to github.com":
-    web_search(query="https://github.com") → done.
-- "open Notes and write a todo":
-    open_app(name="Notes") → wait_ms(ms=900) → key_press(key="n", modifiers=["cmd"]) → type_text(text="...") → done.
+- "check the weather in Tokyo": web_search(query="weather tokyo") → finish_task(summary="Opened weather for Tokyo.").
+- "go to github.com": web_search(query="https://github.com") → finish_task(summary="Navigated to GitHub.").
+- "search for cats on YouTube": inspect_ui(query="search") → click_at(x, y) → type_text(text="cats") → key_press(key="Return") → finish_task(summary="Searched for cats on YouTube.").
+- "click Stop Sharing in Zoom": click_button(label="Stop Sharing", app="zoom.us") → finish_task(summary="Clicked Stop Sharing.").
+- "open Notes and write a todo": open_app(name="Notes") → type_text(text="Buy groceries") → finish_task(summary="Wrote todo in Notes.").
 
 Safety:
 - Refuse to send messages, delete data, quit apps, or modify files unless the user clearly asked.
-- If a tool returns an error, explain and try one alternative or stop.
+- If a tool returns an error, try one alternative then stop — do not retry in a loop.
 """
 
     private static let mustUseToolsNudge: String = "You did not call any tool, so nothing has happened on the user's Mac yet. Do NOT claim completion. Re-read the user request and call the tool(s) needed to actually perform it now. Your reply must include tool_calls."
@@ -734,11 +760,22 @@ enum BlinkAgentToolCatalog {
             ],
             [
                 "name": "new_tab",
-                "description": "Open a new tab in the frontmost browser (cmd+t). Use this when the user says 'new tab'.",
+                "description": "Open a new tab in the frontmost browser (cmd+t). Use ONLY when the user explicitly says 'new tab'. NEVER use this for navigation — use web_search() instead.",
                 "input_schema": [
                     "type": "object",
                     "properties": [:],
                     "additionalProperties": false
+                ]
+            ],
+            [
+                "name": "finish_task",
+                "description": "Signal that the task is fully complete. Call this when you have finished all steps and there is nothing left to do. Pass a brief human-readable summary of what was accomplished.",
+                "input_schema": [
+                    "type": "object",
+                    "properties": [
+                        "summary": ["type": "string", "description": "One sentence describing what was completed."]
+                    ],
+                    "required": ["summary"]
                 ]
             ]
         ]
@@ -801,6 +838,8 @@ enum BlinkAgentToolCatalog {
 // MARK: - Tool executor
 
 enum BlinkAgentToolExecutor {
+    private static var lastNewTabDate: Date? = nil
+
     /// Returns (status, detail). status is "ok" on success or an error label otherwise.
     static func execute(name: String, input: [String: Any]) async -> (status: String, detail: String) {
         switch name {
@@ -814,18 +853,21 @@ enum BlinkAgentToolExecutor {
         case "click_at":
             return mouseAction(name: name, input: input) { point in
                 try BlinkComputerUseMouseInput.move(to: point, smoothly: true)
+                usleep(80_000) // let the window server process the move before the click
                 try BlinkComputerUseMouseInput.click(at: point)
                 return "Clicked at (\(Int(point.x)), \(Int(point.y)))."
             }
         case "double_click_at":
             return mouseAction(name: name, input: input) { point in
                 try BlinkComputerUseMouseInput.move(to: point, smoothly: true)
+                usleep(80_000)
                 try BlinkComputerUseMouseInput.click(at: point, clickCount: 2)
                 return "Double-clicked at (\(Int(point.x)), \(Int(point.y)))."
             }
         case "right_click_at":
             return mouseAction(name: name, input: input) { point in
                 try BlinkComputerUseMouseInput.move(to: point, smoothly: true)
+                usleep(80_000)
                 try BlinkComputerUseMouseInput.click(at: point, button: .right)
                 return "Right-clicked at (\(Int(point.x)), \(Int(point.y)))."
             }
@@ -887,6 +929,13 @@ enum BlinkAgentToolExecutor {
         case "web_search":
             return await webSearch(input: input)
         case "new_tab":
+            // Debounce: refuse if a new tab was opened in the last 3 seconds
+            // to prevent the model from looping and stacking unwanted tabs.
+            let now = Date()
+            if let last = lastNewTabDate, now.timeIntervalSince(last) < 3 {
+                return ("error", "new_tab was already called moments ago. Do NOT call it again — use web_search() for navigation instead.")
+            }
+            lastNewTabDate = now
             do {
                 try BlinkComputerUseKeyboardInput.press("t", modifiers: ["cmd"])
                 return ("ok", "Opened a new tab (cmd+t).")
@@ -2074,6 +2123,7 @@ enum BlinkAgentAccessibilityClicker {
         let center = CGPoint(x: frame.midX, y: frame.midY)
         do {
             try BlinkComputerUseMouseInput.move(to: center, smoothly: true)
+            usleep(80_000)
             try BlinkComputerUseMouseInput.click(at: center)
             return .clicked(role: hit.role, title: hit.title, point: center)
         } catch {

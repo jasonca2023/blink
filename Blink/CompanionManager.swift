@@ -491,7 +491,7 @@ final class CompanionManager: ObservableObject {
     /// "Completed" cards auto-disappear instead of stacking up.
     private func scheduleAutoDismissOfCompletedAgent(sessionID: UUID) {
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
             await MainActor.run {
                 guard let self else { return }
                 self.agentDockItems.removeAll { $0.sessionID == sessionID && $0.status == .done }
@@ -1025,7 +1025,9 @@ final class CompanionManager: ObservableObject {
     }
 
     var codexAgentSession: CodexAgentSession {
-        codexAgentSessions.first { $0.id == activeCodexAgentSessionID } ?? codexAgentSessions[0]
+        codexAgentSessions.first { $0.id == activeCodexAgentSessionID }
+            ?? codexAgentSessions.first
+            ?? createAndSelectNewCodexAgentSession()
     }
 
     private let runtimeMode: BlinkCompanionRuntimeMode
@@ -12157,10 +12159,10 @@ final class CompanionManager: ObservableObject {
         let volumeIncrement = (targetVolume - player.volume) / Float(steps)
         var stepsRemaining = steps
 
-        Timer.scheduledTimer(withTimeInterval: stepInterval, repeats: true) { timer in
+        Timer.scheduledTimer(withTimeInterval: stepInterval, repeats: true) { [weak player] timer in
+            guard let player else { timer.invalidate(); return }
             stepsRemaining -= 1
             player.volume += volumeIncrement
-
             if stepsRemaining <= 0 {
                 timer.invalidate()
                 player.volume = targetVolume

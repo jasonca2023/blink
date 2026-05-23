@@ -367,16 +367,36 @@ final class CodexHomeManager {
     }
 
     private func copyDefaultCodexAuthIfAvailable(to home: URL) throws {
-        guard BlinkCodexBackend.isDefaultOpenAIBaseURL(workerBaseURL) else { return }
-
         let destination = home.appendingPathComponent("auth.json", isDirectory: false)
-        guard !fileManager.fileExists(atPath: destination.path) else { return }
 
+        // Prefer writing auth.json directly from the key configured in
+        // secrets.env so a stale ~/.codex/auth.json can never shadow it.
+        let backend = BlinkAgentBackendKind.current()
+        let (keyName, keyValue): (String, String?)
+        switch backend {
+        case .huggingFace:
+            keyName = "HUGGINGFACE_API_KEY"
+            keyValue = AppBundleConfiguration.huggingFaceAPIKey()
+        case .openAI:
+            keyName = "OPENAI_API_KEY"
+            keyValue = AppBundleConfiguration.openAIAPIKey()
+        }
+
+        if let key = keyValue, !key.isEmpty {
+            let payload: [String: String] = ["auth_mode": "apikey", keyName: key]
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: destination, options: .atomic)
+            return
+        }
+
+        // No Blink-configured key — fall back to copying the global Codex CLI
+        // auth.json only if one is present and nothing is written yet.
+        guard BlinkCodexBackend.isDefaultOpenAIBaseURL(workerBaseURL),
+              !fileManager.fileExists(atPath: destination.path) else { return }
         let source = fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent(".codex", isDirectory: true)
             .appendingPathComponent("auth.json", isDirectory: false)
         guard fileManager.fileExists(atPath: source.path) else { return }
-
         try fileManager.copyItem(at: source, to: destination)
     }
 
