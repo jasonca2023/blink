@@ -241,9 +241,17 @@ final class BlinkBrainRouter {
     - click_at for clicking visible UI elements when no shortcut exists. x/y in points relative to the screenshot top-left.
     - type_text to type a string into the focused field.
     - speak_answer for factual / conversational replies (no UI action). Setting needs_visual=true only for places, food, nature, animals, products, recipes.
-    - run_background_agent for long minutes-long work (build a script, refactor, research report).
+    - run_background_agent for ANY work that involves writing, editing, generating, refactoring, building, debugging, or researching source code, scripts, configuration, or content. Examples that ALWAYS go to run_background_agent: "code a website", "build a python script", "make me a chrome extension", "write a SwiftUI view that…", "refactor this file", "fix the bug in…", "set up a node project", "write tests for…", "research X and write it up". NEVER open Terminal, Xcode, Cursor, VS Code, or any editor to type code yourself via type_text — that wastes the user's foreground. Hand the instruction to run_background_agent and call finish_task.
     - web_search for explicit "google X" requests.
     - finish_task ALWAYS at the end of a multi-step task once everything is done. Provide a 4-10 word summary that will be spoken aloud.
+
+    Example — "code me a website that tracks sleep":
+      step 1: run_background_agent instruction "Build a single-page website that tracks daily sleep. Include HTML, CSS, and minimal JS to log hours, persist to localStorage, and chart the last 14 days."
+      step 2: finish_task — summary "spawned a background agent to build your sleep tracker"
+
+    Example — "fix the bug in BlinkAgentLoop.swift":
+      step 1: run_background_agent instruction "Open BlinkAgentLoop.swift in the current workspace, identify and fix the bug the user mentioned, and report what you changed."
+      step 2: finish_task — summary "handed the fix off to a background agent"
 
     Stop calling intermediate tools and call finish_task as soon as the goal is visibly achieved in the screenshot.
 
@@ -339,7 +347,7 @@ final class BlinkBrainRouter {
         [
             "type": "function",
             "name": "run_background_agent",
-            "description": "Spawn a background Codex agent for substantial work (minutes-long).",
+            "description": "Spawn a background Codex agent. REQUIRED for any coding, scripting, refactoring, building, debugging, file editing, content writing, or multi-step research task — anything the user would otherwise type into an editor or terminal. Use this instead of opening Terminal/Xcode/Cursor and driving them via keystrokes. The instruction string is handed directly to the background agent.",
             "parameters": [
                 "type": "object",
                 "properties": [

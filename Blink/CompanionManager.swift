@@ -8060,7 +8060,7 @@ final class CompanionManager: ObservableObject {
     }
 
     private static func containsDurableWorkTarget(_ normalized: String) -> Bool {
-        let targetPattern = #"\b(?:blink|blink|repo|repository|codebase|project|app|settings|preference|preferences|log|logs|memory|skill|skills|desktop|download|downloads|document|documents|folder|folders|file|files|code|diff|git|branch|pull\s+request|issue|bug|test|tests|build|swift|xcode|email|gmail|calendar|spreadsheet|sheet|doc|slides)\b"#
+        let targetPattern = #"\b(?:blink|blink|repo|repository|codebase|project|app|settings|preference|preferences|log|logs|memory|skill|skills|desktop|download|downloads|document|documents|folder|folders|file|files|code|diff|git|branch|pull\s+request|issue|bug|test|tests|build|swift|xcode|email|gmail|calendar|spreadsheet|sheet|doc|slides|website|web\s+page|webpage|site|page|script|extension|chrome\s+extension|tool|tools|function|class|component|feature|endpoint|api|server|backend|frontend|database|schema|migration|cli|library|package|module|game|bot|prototype|landing\s+page|dashboard|widget|plugin|theme|stylesheet|css|html|js|javascript|typescript|python|node|react|swiftui|html\s+file)\b"#
         return normalized.range(of: targetPattern, options: .regularExpression) != nil
     }
 
