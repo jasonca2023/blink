@@ -338,6 +338,8 @@ final class CompanionManager: ObservableObject {
         return OpenAITTSClient(apiKey: AppBundleConfiguration.openAIAPIKey())
     }()
 
+    private let chromaDB = ChromaDBClient.shared
+
     /// Centered translucent showcase panel that pairs every spoken
     /// response with a topical photo. Fed from `surfaceRichResponse`.
     let richResponseWindowManager = BlinkRichResponseWindowManager()
@@ -10687,6 +10689,8 @@ final class CompanionManager: ObservableObject {
 
             do {
                 BlinkApplicationUsageLogStore.shared.recordFrontmostApplication(source: "voice_question")
+                // ChromaDB memory query runs in parallel with screen capture.
+                async let chromaMemoryFetch = chromaDB.queryRelevant(for: transcript)
                 // Only attach screenshots when the utterance actually needs
                 // visual context. Text-only turns should not pay the capture,
                 // base64, upload, and vision-processing latency tax.
@@ -10746,9 +10750,21 @@ final class CompanionManager: ObservableObject {
                     focusedAppName: focusedApp?.localizedName,
                     limit: 3
                 )
-                let userPromptForClaude = ragContext.isEmpty
+                let chromaMemories = await chromaMemoryFetch
+                let chromaContext: String
+                if chromaMemories.isEmpty {
+                    chromaContext = ""
+                } else {
+                    let lines = chromaMemories
+                        .map { "- they said \"\($0.transcript)\" and you replied \"\($0.response)\"" }
+                        .joined(separator: "\n")
+                    chromaContext = "past relevant exchanges (use for context, don't mention unless asked):\n\(lines)"
+                    print("🧠 ChromaDB: injected \(chromaMemories.count) relevant memories")
+                }
+                let allContext = [ragContext, chromaContext].filter { !$0.isEmpty }.joined(separator: "\n\n")
+                let userPromptForClaude = allContext.isEmpty
                     ? basePrompt
-                    : "\(ragContext)\n\n\(basePrompt)"
+                    : "\(allContext)\n\n\(basePrompt)"
 
                 let isRealtimeResponseModel = BlinkModelCatalog.isSpeechModelID(self.selectedModel)
                 let visualAnalysisModelID = isRealtimeResponseModel && shouldAttachScreenContext
@@ -11120,6 +11136,11 @@ final class CompanionManager: ObservableObject {
                     assistantResponse: spokenText,
                     reason: "voice_response"
                 )
+
+                // Persist to ChromaDB in the background — don't block TTS.
+                let storedTranscript = transcript
+                let storedResponse = spokenText
+                Task { await self.chromaDB.store(transcript: storedTranscript, response: storedResponse) }
 
                 print("🧠 Conversation history: \(self.conversationHistory.count) active exchanges")
                 do {
