@@ -1,0 +1,158 @@
+# Blink App Updates
+
+Blink uses Sparkle 2 for direct-distribution updates. This does not apply to a future Mac App Store build, where updates must come through the App Store.
+
+The app is configured for OTA-style updates:
+
+- `SUEnableAutomaticChecks`: checks for updates automatically.
+- `SUAllowsAutomaticUpdates`: allows the automatic update option.
+- `SUAutomaticallyUpdate`: defaults to background download and install behavior.
+- `SUScheduledCheckInterval`: checks roughly once per day.
+
+## Update Feed
+
+- Feed URL in the app: `https://raw.githubusercontent.com/blink/blink/main/appcast.xml`
+- Feed file in this repo: `appcast.xml`
+- Release asset host: GitHub Releases under `https://github.com/blink/blink/releases`
+- Public EdDSA key in `Info.plist`: `SUPublicEDKey`
+- Sparkle Keychain account: `blink`
+
+The checked-in `appcast.xml` is intentionally an empty Blink feed until the first signed release artifact exists.
+
+Before the first real Blink release, confirm that the Sparkle private key for account `blink` is present in your Keychain and matches `SUPublicEDKey`. Keep the private key outside the repository. Existing installed builds can only move to a new Sparkle key if they first receive a bridge update signed by the old key.
+
+## Release Flow
+
+1. Bump `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in Xcode.
+2. Archive the app in Xcode with the `Blink` scheme.
+3. Export a Developer ID signed app for direct distribution.
+4. Package the exported `.app` into a DMG.
+5. Notarize and staple the DMG.
+6. Sign the DMG for Sparkle with Sparkle's `sign_update` tool.
+7. Upload the stapled DMG to a GitHub Release named `v<MARKETING_VERSION>`.
+8. Add a new item to `appcast.xml`.
+9. Commit and push `appcast.xml` to `main`.
+
+## Appcast Item Shape
+
+Use this template after replacing the version, build, date, URL, byte length, and Sparkle signature:
+
+```xml
+<item>
+    <title>Blink 1.0.1</title>
+    <pubDate>Fri, 24 Apr 2026 16:10:08 +0000</pubDate>
+    <sparkle:version>7</sparkle:version>
+    <sparkle:shortVersionString>1.0.1</sparkle:shortVersionString>
+    <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
+    <enclosure
+        url="https://github.com/blink/blink/releases/download/v1.0.1/Blink-1.0.1.dmg"
+        length="12345678"
+        type="application/octet-stream"
+        sparkle:edSignature="SIGNATURE_FROM_SPARKLE_SIGN_UPDATE"/>
+</item>
+```
+
+## Local Commands
+
+The exact Sparkle binary path depends on where Xcode stores Swift package artifacts. If the app archive contains Sparkle tools, use that `sign_update`; otherwise build or download Sparkle's release tools.
+
+```sh
+# Notarize the DMG. The keychain profile is created once with notarytool store-credentials.
+xcrun notarytool submit Blink-1.0.1.dmg --keychain-profile "blink-notary" --wait
+xcrun stapler staple Blink-1.0.1.dmg
+
+# Generate Sparkle's EdDSA signature.
+sign_update --account blink Blink-1.0.1.dmg
+
+# Get the byte length for the appcast enclosure.
+stat -f%z Blink-1.0.1.dmg
+```
+
+## Review Checklist
+
+- The DMG opens without Gatekeeper warnings on a clean Mac.
+- `spctl --assess --type open --context context:primary-signature -vv Blink-1.0.1.dmg` accepts it.
+- The appcast URL is reachable over HTTPS.
+- The new appcast item has a higher `sparkle:version` than the installed build.
+- The appcast item URL exactly matches the uploaded GitHub Release asset.
+- `sparkle:edSignature` was generated from the final stapled DMG, not an earlier copy.
+- A clean installed build checks the feed and offers or stages the update without sending the user to GitHub manually.
+
+## Local OTA Test
+
+Use this to prove the update loop before publishing to GitHub Releases. Build the app in Xcode, not with terminal `xcodebuild`, so macOS permission state remains tied to the proper app identity.
+
+### 1. Build And Install The Baseline
+
+1. In Xcode, set `MARKETING_VERSION` to a lower test version, for example `1.0.0`.
+2. Set `CURRENT_PROJECT_VERSION` to a lower build number, for example `100`.
+3. Archive/export a Developer ID signed app or run a proper Release build from Xcode.
+4. Install that build into `/Applications/Blink.app`.
+5. Quit Blink.
+
+Point that installed build at a local appcast:
+
+```sh
+defaults write com.blink.blink BlinkSparkleFeedURLOverride -string "http://127.0.0.1:8808/appcast.xml"
+```
+
+The override only accepts `https`, `file`, or local `http` feeds. Non-local `http` is ignored. When this override is present, Blink triggers a Sparkle background check immediately on launch.
+
+### 2. Build The Update
+
+1. In Xcode, bump `MARKETING_VERSION`, for example to `1.0.1`.
+2. Bump `CURRENT_PROJECT_VERSION`, for example to `101`.
+3. Archive/export the updated app.
+4. Package it as `Blink-1.0.1.dmg`.
+5. Sign the final DMG with Sparkle's `sign_update --account blink` and keep the signature output.
+
+### 3. Serve A Local Feed
+
+Create a temporary update folder and appcast:
+
+```sh
+scripts/create-local-appcast.sh /path/to/Blink-1.0.1.dmg 1.0.1 101 "SIGNATURE_FROM_SPARKLE_SIGN_UPDATE"
+```
+
+That writes `/tmp/blink-ota/appcast.xml` with a higher `sparkle:version` than the installed app:
+
+```xml
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Blink Local Updates</title>
+        <item>
+            <title>Blink 1.0.1</title>
+            <pubDate>Fri, 24 Apr 2026 16:10:08 +0000</pubDate>
+            <sparkle:version>101</sparkle:version>
+            <sparkle:shortVersionString>1.0.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
+            <enclosure
+                url="http://127.0.0.1:8808/Blink-1.0.1.dmg"
+                length="DMG_BYTE_LENGTH"
+                type="application/octet-stream"
+                sparkle:edSignature="SIGNATURE_FROM_SPARKLE_SIGN_UPDATE"/>
+        </item>
+    </channel>
+</rss>
+```
+
+Serve the folder:
+
+```sh
+cd /tmp/blink-ota
+python3 -m http.server 8808 --bind 127.0.0.1
+```
+
+### 4. Trigger The Update
+
+1. Launch `/Applications/Blink.app`.
+2. Sparkle will read the local feed override and see the higher build.
+3. Accept or wait for the update flow.
+4. After relaunch, confirm the app version/build changed.
+
+Clear the local feed override after testing:
+
+```sh
+defaults delete com.blink.blink BlinkSparkleFeedURLOverride
+```

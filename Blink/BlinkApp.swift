@@ -1,0 +1,166 @@
+//
+//  BlinkApp.swift
+//  Blink
+//
+//  Menu bar-only companion app. No dock icon, no main window — just an
+//  always-available status item in the macOS menu bar. Clicking the icon
+//  opens a floating panel with companion voice controls.
+//
+
+import Carbon
+import ServiceManagement
+import SwiftUI
+import Sparkle
+
+@main
+struct BlinkApp: App {
+    @NSApplicationDelegateAdaptor(CompanionAppDelegate.self) var appDelegate
+
+    var body: some Scene {
+        // The app lives entirely in the menu bar panel managed by the AppDelegate.
+        // This empty Settings scene satisfies SwiftUI's requirement for at least
+        // one scene but is never shown (LSUIElement=true removes the app menu).
+        Settings {
+            EmptyView()
+        }
+    }
+}
+
+/// Manages the companion lifecycle: creates the menu bar panel and starts
+/// the companion voice pipeline on launch.
+@MainActor
+final class CompanionAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDelegate, SPUStandardUserDriverDelegate {
+    private static let sparkleFeedOverrideDefaultsKey = "BlinkSparkleFeedURLOverride"
+    private var menuBarPanelManager: MenuBarPanelManager?
+    private let companionManager = CompanionManager()
+    private var sparkleUpdaterController: SPUStandardUpdaterController?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        print("Blink: Starting...")
+        print("Blink: Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")")
+
+        // Default in-app computer use ON so voice commands like "open
+        // github.com" can drive the focused window without the user
+        // having to flip a toggle in Settings on first launch. Also
+        // default the TTS provider to the built-in system voice so
+        // responses are audible without an ElevenLabs / Cartesia /
+        // Deepgram key configured.
+        UserDefaults.standard.register(defaults: [
+            "NSInitialToolTipDelay": 0,
+            AppBundleConfiguration.userNativeComputerUseDefaultsKey: true,
+            AppBundleConfiguration.userTTSProviderDefaultsKey: BlinkTTSProvider.openAITTS.rawValue
+        ])
+
+        BlinkAnalytics.configure()
+        BlinkAnalytics.trackAppOpened()
+        BlinkDesktopNotificationCenter.shared.configure()
+
+        menuBarPanelManager = MenuBarPanelManager(companionManager: companionManager)
+        companionManager.start()
+        companionManager.publishWidgetSnapshot()
+        // Auto-open the panel if the user still needs to do something:
+        // either they haven't onboarded yet, or permissions were revoked.
+        // Blink development builds should also open visibly on launch even
+        // if older UserDefaults say onboarding was already completed; otherwise
+        // the LSUIElement app can appear to do nothing except add a menu bar icon.
+        if BlinkRuntimeMode.isDevelopmentBuild
+            || !companionManager.hasCompletedOnboarding
+            || !companionManager.allPermissionsGranted {
+            menuBarPanelManager?.showPanelOnLaunch()
+        }
+        registerAsLoginItemIfNeeded()
+        startSparkleUpdater()
+
+        Task.detached(priority: .utility) {
+            await BlinkSemanticIndex.shared.prepareIfNeeded()
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        companionManager.stop()
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        urls.forEach { companionManager.handleWidgetDeepLink($0) }
+    }
+
+    /// Registers the app as a login item so it launches automatically on
+    /// startup. Uses SMAppService which shows the app in System Settings >
+    /// General > Login Items, letting the user toggle it off if they want.
+    private func registerAsLoginItemIfNeeded() {
+        let loginItemService = SMAppService.mainApp
+        if loginItemService.status != .enabled {
+            do {
+                try loginItemService.register()
+                print("Blink: Registered as login item")
+            } catch {
+                print("Blink: Failed to register as login item: \(error)")
+            }
+        }
+    }
+
+    private func startSparkleUpdater() {
+        let updaterController = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: self,
+            userDriverDelegate: self
+        )
+        self.sparkleUpdaterController = updaterController
+
+        if Self.sparkleFeedOverrideURLString() != nil {
+            DispatchQueue.main.async {
+                updaterController.updater.checkForUpdatesInBackground()
+            }
+        }
+    }
+
+    func feedURLString(for updater: SPUUpdater) -> String? {
+        guard let override = Self.sparkleFeedOverrideURLString() else { return nil }
+        print("Blink: Using Sparkle feed override: \(override)")
+        return override
+    }
+
+    nonisolated var supportsGentleScheduledUpdateReminders: Bool {
+        true
+    }
+
+    nonisolated func standardUserDriverShouldHandleShowingScheduledUpdate(
+        _ update: SUAppcastItem,
+        andInImmediateFocus immediateFocus: Bool
+    ) -> Bool {
+        true
+    }
+
+    nonisolated func standardUserDriverWillHandleShowingUpdate(
+        _ handleShowingUpdate: Bool,
+        forUpdate update: SUAppcastItem,
+        state: SPUUserUpdateState
+    ) {
+        guard handleShowingUpdate, !state.userInitiated else { return }
+        Task { @MainActor in
+            NSApp.activate(ignoringOtherApps: true)
+            self.menuBarPanelManager?.showPanelOnLaunch()
+        }
+    }
+
+    private static func sparkleFeedOverrideURLString() -> String? {
+        let override = UserDefaults.standard.string(forKey: sparkleFeedOverrideDefaultsKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let override, !override.isEmpty else { return nil }
+        guard let url = URL(string: override),
+              ["https", "http", "file"].contains(url.scheme?.lowercased() ?? "") else {
+            print("Blink: Ignoring invalid Sparkle feed override: \(override)")
+            return nil
+        }
+
+        if url.scheme?.lowercased() == "http" {
+            let host = url.host?.lowercased() ?? ""
+            guard host == "localhost" || host == "127.0.0.1" || host == "::1" else {
+                print("Blink: Ignoring non-local HTTP Sparkle feed override: \(override)")
+                return nil
+            }
+        }
+
+        return override
+    }
+}
