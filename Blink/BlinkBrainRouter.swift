@@ -70,9 +70,7 @@ final class BlinkBrainRouter {
 
             if toolCall.name == "finish_task" {
                 let summary = (toolCall.arguments["summary"] as? String) ?? ""
-                if !summary.isEmpty {
-                    companionManager?.brainSpeak(summary)
-                }
+                companionManager?.brainSpeak(summary.isEmpty ? "done" : summary)
                 return true
             }
 
@@ -137,7 +135,9 @@ final class BlinkBrainRouter {
                 return DispatchResult(handled: false, isTerminal: false)
             }
             NSWorkspace.shared.open(url)
-            return DispatchResult(handled: true, isTerminal: false)
+            let displayName = (toolCall.arguments["display_name"] as? String) ?? url.host ?? urlString
+            companionManager.brainSpeak("opening \(displayName)")
+            return DispatchResult(handled: true, isTerminal: true)
 
         case "open_app":
             guard let appName = toolCall.arguments["app"] as? String, !appName.isEmpty else {
@@ -234,6 +234,10 @@ final class BlinkBrainRouter {
     Example — "search github for a typescript router":
       step 1: open_url https://github.com/search?q=typescript+router
       step 2: finish_task
+
+    Example — "open the blink repo" / "open my repo" / "open [repo name] on github":
+      step 1: open_url https://github.com/search?q=reponame (if exact owner/repo unknown) OR open_url https://github.com/owner/repo (if known from context)
+      (open_url speaks a confirmation automatically — do NOT call finish_task after open_url)
 
     Tool selection rules:
     - open_url for any WEBSITE or web brand (github, gmail, youtube, hacker news, twitter, reddit, the verge, anthropic, openai, claude, anything that lives on the web). ALWAYS use open_url for these — never open_app. Recover garbled Apple Speech ("opengithub.com", "github dot com") into the real domain.
