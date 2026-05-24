@@ -383,7 +383,18 @@ final class CompanionManager: ObservableObject {
     /// failure so the caller can fall through to the existing pipeline.
     func routeThroughBrain(transcript: String) async -> Bool {
         guard AppBundleConfiguration.openAIAPIKey() != nil else { return false }
-        return await brainRouter.route(transcript: transcript)
+        let memories = await chromaDB.queryRelevant(for: transcript)
+        let enrichedTranscript: String
+        if memories.isEmpty {
+            enrichedTranscript = transcript
+        } else {
+            let lines = memories
+                .map { "- \"\($0.transcript)\" → \"\($0.response)\"" }
+                .joined(separator: "\n")
+            enrichedTranscript = "\(transcript)\n\n[past relevant exchanges:\n\(lines)]"
+            print("🧠 ChromaDB: injected \(memories.count) relevant memories into brain router")
+        }
+        return await brainRouter.route(transcript: enrichedTranscript)
     }
 
     /// Speaks a short confirmation via the active TTS provider (system
@@ -397,6 +408,8 @@ final class CompanionManager: ObservableObject {
     /// answer needs visuals (e.g. weather, places, recipes) — keeps the
     /// UI quiet for short factual replies.
     func brainSpeakWithVisual(text: String, imageTopic: String, transcript: String, needsVisual: Bool) {
+        rememberVoiceExchange(userTranscript: transcript, assistantResponse: text, reason: "brain_router")
+        Task { await chromaDB.store(transcript: transcript, response: text) }
         speakShortSystemResponse(text)
         guard needsVisual, !imageTopic.isEmpty else { return }
         playResponseReadyChime()
