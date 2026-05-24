@@ -130,6 +130,7 @@ final class BlinkBrainRouter {
             return DispatchResult(handled: false, isTerminal: true)
         }
 
+        print("🧠 BrainRouter dispatch: \(toolCall.name)")
         switch toolCall.name {
         case "open_url":
             guard let urlString = toolCall.arguments["url"] as? String,
@@ -138,7 +139,9 @@ final class BlinkBrainRouter {
             }
             NSWorkspace.shared.open(url)
             let displayName = (toolCall.arguments["display_name"] as? String) ?? url.host ?? urlString
-            companionManager.brainSpeak("opening \(displayName)")
+            let spoken = "opening \(displayName)"
+            companionManager.brainSpeak(spoken)
+            companionManager.brainRememberExchange(transcript: transcript, response: spoken)
             return DispatchResult(handled: true, isTerminal: true)
 
         case "open_app":
@@ -187,7 +190,9 @@ final class BlinkBrainRouter {
                 return DispatchResult(handled: false, isTerminal: true)
             }
             NSWorkspace.shared.open(url)
-            companionManager.brainSpeak("Searching for \(query)")
+            let searchSpoken = "Searching for \(query)"
+            companionManager.brainSpeak(searchSpoken)
+            companionManager.brainRememberExchange(transcript: transcript, response: searchSpoken)
             return DispatchResult(handled: true, isTerminal: true)
 
         case "press_keys":
@@ -220,6 +225,8 @@ final class BlinkBrainRouter {
 
     private static let systemPrompt = """
     You are Blink, a macOS voice assistant that drives the screen. The user speaks; you see the screen each turn; you execute tools until the task is complete.
+
+    The user's transcript may include a [past relevant exchanges] block containing prior conversations retrieved from memory. Use these to personalise your response — resolve vague references like "that app", "same as before", "open it again" using past exchanges. If a past exchange is directly relevant, factor it into your answer or action without mentioning that you're doing so.
 
     Every turn call EXACTLY ONE tool. Never refuse, never ask for clarification.
 
