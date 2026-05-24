@@ -384,6 +384,7 @@ final class CompanionManager: ObservableObject {
     func routeThroughBrain(transcript: String) async -> Bool {
         guard AppBundleConfiguration.openAIAPIKey() != nil else { return false }
         let memories = await chromaDB.queryRelevant(for: transcript)
+        print("🧠 ChromaDB: query returned \(memories.count) memories for: \(transcript.prefix(40))")
         let enrichedTranscript: String
         if memories.isEmpty {
             enrichedTranscript = transcript

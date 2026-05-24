@@ -39,6 +39,7 @@ actor ChromaDBClient {
     /// Persist a conversation turn. Skips storage if a semantically identical
     /// exchange already exists (cosine distance < 0.1). Fire-and-forget.
     func store(transcript: String, response: String) async {
+        print("🧠 ChromaDB: store called for: \(transcript.prefix(40))")
         do {
             let colID = try await ensureCollection()
 
