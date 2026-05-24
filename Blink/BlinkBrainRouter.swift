@@ -70,7 +70,9 @@ final class BlinkBrainRouter {
 
             if toolCall.name == "finish_task" {
                 let summary = (toolCall.arguments["summary"] as? String) ?? ""
-                companionManager?.brainSpeak(summary.isEmpty ? "done" : summary)
+                let spoken = summary.isEmpty ? "done" : summary
+                companionManager?.brainSpeak(spoken)
+                companionManager?.brainRememberExchange(transcript: trimmed, response: spoken)
                 return true
             }
 

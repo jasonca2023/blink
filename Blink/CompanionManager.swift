@@ -404,6 +404,12 @@ final class CompanionManager: ObservableObject {
         speakShortSystemResponse(text)
     }
 
+    /// Stores a brain-router exchange in session history and ChromaDB.
+    func brainRememberExchange(transcript: String, response: String) {
+        rememberVoiceExchange(userTranscript: transcript, assistantResponse: response, reason: "brain_router")
+        Task { await chromaDB.store(transcript: transcript, response: response) }
+    }
+
     /// Speaks the brain's answer. Only shows the centered rich panel
     /// with a topical Unsplash image when the brain explicitly says the
     /// answer needs visuals (e.g. weather, places, recipes) — keeps the
