@@ -39,7 +39,11 @@ enum BlinkModelCatalog {
     /// Coding work goes here; the voice path stays on the fast model.
     static let defaultDelegationModelID = "claude-sonnet-4-6"
     static let defaultComputerUseModelID = "claude-sonnet-4-6"
-    static let defaultCodexActionsModelID = "gpt-5.4"
+    // gpt-5-codex is the publicly-available OpenAI Codex model accessible
+    // to standard project keys. Earlier defaults referenced "gpt-5.4",
+    // which isn't a real model id and surfaced as 401 invalid_api_key on
+    // /v1/responses for fresh installs.
+    static let defaultCodexActionsModelID = "gpt-5-codex"
 
     /// Resolves the delegation model — falls back to a sensible coder
     /// when the user hasn't picked one explicitly.
