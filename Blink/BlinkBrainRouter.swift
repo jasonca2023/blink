@@ -26,14 +26,26 @@ final class BlinkBrainRouter {
         self.openAIAPI = openAIAPI
     }
 
-    func route(transcript: String) async -> Bool {
+    func route(transcript: String, history: [(user: String, assistant: String)] = []) async -> Bool {
         let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
 
         let systemPrompt = Self.systemPrompt
         let tools = Self.chatTools
 
-        // Seed conversation with user's request + initial screenshot (chat completions format).
+        // Seed the conversation with recent turns so the router has short-term
+        // memory (e.g. "what's his name?" right after "my dog is Bob") without
+        // depending on the async ChromaDB store having landed yet.
+        var messages: [[String: Any]] = []
+        for turn in history {
+            let priorUser = turn.user.trimmingCharacters(in: .whitespacesAndNewlines)
+            let priorAssistant = turn.assistant.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !priorUser.isEmpty, !priorAssistant.isEmpty else { continue }
+            messages.append(["role": "user", "content": priorUser])
+            messages.append(["role": "assistant", "content": priorAssistant])
+        }
+
+        // Append the current request + initial screenshot (chat completions format).
         var userContent: [[String: Any]] = [[
             "type": "text",
             "text": trimmed
@@ -44,10 +56,10 @@ final class BlinkBrainRouter {
                 "image_url": ["url": "data:image/jpeg;base64,\(screenshot.base64EncodedString())"]
             ])
         }
-        var messages: [[String: Any]] = [[
+        messages.append([
             "role": "user",
             "content": userContent
-        ]]
+        ])
 
         var didDispatchAtLeastOneTool = false
 

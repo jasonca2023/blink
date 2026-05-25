@@ -404,7 +404,22 @@ final class CompanionManager: ObservableObject {
             enrichedTranscript = "\(transcript)\n\n[past relevant exchanges:\n\(lines)]"
             print("🧠 ChromaDB: injected \(memories.count) relevant memories into brain router")
         }
-        return await brainRouter.route(transcript: enrichedTranscript)
+        // Synchronous short-term memory: the most recent turns are available
+        // immediately (unlike the async, fire-and-forget ChromaDB store), so
+        // back-to-back recall works even before that store lands.
+        let recentHistory = recentBrainConversationHistory()
+        return await brainRouter.route(transcript: enrichedTranscript, history: recentHistory)
+    }
+
+    private static let brainRouterHistoryTurnLimit = 6
+
+    /// The most recent voice exchanges, oldest-first, for seeding the brain
+    /// router with short-term context. Reads conversationHistory, which is
+    /// updated synchronously on each turn.
+    private func recentBrainConversationHistory() -> [(user: String, assistant: String)] {
+        conversationHistory
+            .suffix(Self.brainRouterHistoryTurnLimit)
+            .map { (user: $0.userTranscript, assistant: $0.assistantResponse) }
     }
 
     /// Speaks a short confirmation via the active TTS provider (system
