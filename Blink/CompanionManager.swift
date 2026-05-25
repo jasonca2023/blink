@@ -340,6 +340,12 @@ final class CompanionManager: ObservableObject {
 
     private let chromaDB = ChromaDBClient.shared
 
+    // App focused when the current brain-router utterance began. Captured up
+    // front so a memory is tagged with the app the user was actually in, even
+    // if an action (open_url, open_app) changes focus before it is stored.
+    private var brainRoutingAppBundleID: String?
+    private var brainRoutingAppName: String?
+
     /// Centered translucent showcase panel that pairs every spoken
     /// response with a topical photo. Fed from `surfaceRichResponse`.
     let richResponseWindowManager = BlinkRichResponseWindowManager()
@@ -383,7 +389,10 @@ final class CompanionManager: ObservableObject {
     /// failure so the caller can fall through to the existing pipeline.
     func routeThroughBrain(transcript: String) async -> Bool {
         guard AppBundleConfiguration.openAIAPIKey() != nil else { return false }
-        let memories = await chromaDB.queryRelevant(for: transcript)
+        let focusedApp = NSWorkspace.shared.frontmostApplication
+        brainRoutingAppBundleID = focusedApp?.bundleIdentifier
+        brainRoutingAppName = focusedApp?.localizedName
+        let memories = await chromaDB.queryRelevant(for: transcript, appBundleID: brainRoutingAppBundleID)
         print("🧠 ChromaDB: query returned \(memories.count) memories for: \(transcript.prefix(40))")
         let enrichedTranscript: String
         if memories.isEmpty {
@@ -413,11 +422,14 @@ final class CompanionManager: ObservableObject {
         return transcript
     }
 
-    /// Stores a brain-router exchange in session history and ChromaDB.
+    /// Stores a brain-router exchange in session history and ChromaDB, tagged
+    /// with the app focused when the utterance began.
     func brainRememberExchange(transcript: String, response: String) {
         let clean = stripInjectedMemoryContext(from: transcript)
         rememberVoiceExchange(userTranscript: clean, assistantResponse: response, reason: "brain_router")
-        Task { await chromaDB.store(transcript: clean, response: response) }
+        let appBundleID = brainRoutingAppBundleID
+        let appName = brainRoutingAppName
+        Task { await chromaDB.store(transcript: clean, response: response, appBundleID: appBundleID, appName: appName) }
     }
 
     /// Speaks the brain's answer. Only shows the centered rich panel
@@ -427,7 +439,9 @@ final class CompanionManager: ObservableObject {
     func brainSpeakWithVisual(text: String, imageTopic: String, transcript: String, needsVisual: Bool) {
         let clean = stripInjectedMemoryContext(from: transcript)
         rememberVoiceExchange(userTranscript: clean, assistantResponse: text, reason: "brain_router")
-        Task { await chromaDB.store(transcript: clean, response: text) }
+        let appBundleID = brainRoutingAppBundleID
+        let appName = brainRoutingAppName
+        Task { await chromaDB.store(transcript: clean, response: text, appBundleID: appBundleID, appName: appName) }
         speakShortSystemResponse(text)
         guard needsVisual, !imageTopic.isEmpty else { return }
         playResponseReadyChime()
@@ -10722,8 +10736,13 @@ final class CompanionManager: ObservableObject {
 
             do {
                 BlinkApplicationUsageLogStore.shared.recordFrontmostApplication(source: "voice_question")
+                // Capture the focused app up front so the ChromaDB memory query
+                // and the later store are both scoped to where the user is.
+                let voiceFocusedApp = NSWorkspace.shared.frontmostApplication
+                let voiceFocusedAppBundleID = voiceFocusedApp?.bundleIdentifier
+                let voiceFocusedAppName = voiceFocusedApp?.localizedName
                 // ChromaDB memory query runs in parallel with screen capture.
-                async let chromaMemoryFetch = chromaDB.queryRelevant(for: transcript)
+                async let chromaMemoryFetch = chromaDB.queryRelevant(for: transcript, appBundleID: voiceFocusedAppBundleID)
                 // Only attach screenshots when the utterance actually needs
                 // visual context. Text-only turns should not pay the capture,
                 // base64, upload, and vision-processing latency tax.
@@ -11173,7 +11192,7 @@ final class CompanionManager: ObservableObject {
                 // Persist to ChromaDB in the background — don't block TTS.
                 let storedTranscript = transcript
                 let storedResponse = spokenText
-                Task { await self.chromaDB.store(transcript: storedTranscript, response: storedResponse) }
+                Task { await self.chromaDB.store(transcript: storedTranscript, response: storedResponse, appBundleID: voiceFocusedAppBundleID, appName: voiceFocusedAppName) }
 
                 print("🧠 Conversation history: \(self.conversationHistory.count) active exchanges")
                 do {
