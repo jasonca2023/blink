@@ -404,10 +404,20 @@ final class CompanionManager: ObservableObject {
         speakShortSystemResponse(text)
     }
 
+    /// Strips the injected memory-context block before persisting, so the
+    /// stored transcript matches what the user actually said.
+    private func stripInjectedMemoryContext(from transcript: String) -> String {
+        if let range = transcript.range(of: "\n\n[past relevant exchanges:") {
+            return String(transcript[..<range.lowerBound])
+        }
+        return transcript
+    }
+
     /// Stores a brain-router exchange in session history and ChromaDB.
     func brainRememberExchange(transcript: String, response: String) {
-        rememberVoiceExchange(userTranscript: transcript, assistantResponse: response, reason: "brain_router")
-        Task { await chromaDB.store(transcript: transcript, response: response) }
+        let clean = stripInjectedMemoryContext(from: transcript)
+        rememberVoiceExchange(userTranscript: clean, assistantResponse: response, reason: "brain_router")
+        Task { await chromaDB.store(transcript: clean, response: response) }
     }
 
     /// Speaks the brain's answer. Only shows the centered rich panel
@@ -415,8 +425,9 @@ final class CompanionManager: ObservableObject {
     /// answer needs visuals (e.g. weather, places, recipes) — keeps the
     /// UI quiet for short factual replies.
     func brainSpeakWithVisual(text: String, imageTopic: String, transcript: String, needsVisual: Bool) {
-        rememberVoiceExchange(userTranscript: transcript, assistantResponse: text, reason: "brain_router")
-        Task { await chromaDB.store(transcript: transcript, response: text) }
+        let clean = stripInjectedMemoryContext(from: transcript)
+        rememberVoiceExchange(userTranscript: clean, assistantResponse: text, reason: "brain_router")
+        Task { await chromaDB.store(transcript: clean, response: text) }
         speakShortSystemResponse(text)
         guard needsVisual, !imageTopic.isEmpty else { return }
         playResponseReadyChime()

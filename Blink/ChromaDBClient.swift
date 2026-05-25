@@ -36,6 +36,8 @@ actor ChromaDBClient {
         return http.statusCode == 200
     }
 
+    private static let dateFormatter = ISO8601DateFormatter()
+
     /// Persist a conversation turn. Skips storage if a semantically identical
     /// exchange already exists (cosine distance < 0.1). Fire-and-forget.
     func store(transcript: String, response: String) async {
@@ -60,10 +62,14 @@ actor ChromaDBClient {
                 "metadatas": [[
                     "transcript": transcript,
                     "response": response,
-                    "timestamp": ISO8601DateFormatter().string(from: Date())
+                    "timestamp": Self.dateFormatter.string(from: Date())
                 ]]
             ])
-            _ = try await URLSession.shared.data(for: req)
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                let body = String(data: data, encoding: .utf8) ?? ""
+                throw ChromaError.storeFailed("HTTP \(http.statusCode): \(body.prefix(200))")
+            }
         } catch {
             print("⚠️ ChromaDB store error: \(error)")
         }
@@ -116,7 +122,10 @@ actor ChromaDBClient {
             "n_results": 1,
             "include": ["distances"]
         ])
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            return nil
+        }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let outer = json["distances"] as? [[Double]],
               let first = outer.first?.first
@@ -158,4 +167,5 @@ actor ChromaDBClient {
 
 enum ChromaError: Error {
     case invalidResponse
+    case storeFailed(String)
 }

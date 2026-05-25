@@ -231,10 +231,8 @@ final class BlinkBrainRouter {
     Every turn call EXACTLY ONE tool. Never refuse, never ask for clarification.
 
     Multi-step tasks are normal. Plan ahead.
-    Example — "open github and click my synapse repo":
-      step 1: open_url https://github.com
-      step 2: (after page loads) click_at the synapse repo card you can see on the dashboard
-      step 3: finish_task — summary "opened your synapse repo"
+    Example — "open github and click my synapse repo" / "open my synapse repo on github":
+      step 1: open_url https://github.com/search?q=synapse (open_url speaks confirmation and ends the task automatically)
 
     Example — "end screen sharing":
       step 1: press_keys "cmd+shift+m" (Zoom stop-share shortcut)
