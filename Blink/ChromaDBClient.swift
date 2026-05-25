@@ -45,6 +45,13 @@ actor ChromaDBClient {
     // current request, so they rank above equally-relevant cross-app ones.
     private static let sameAppBoost = 0.15
 
+    // Max cosine distance for a memory to count as relevant. Tuned for the
+    // default embedding model (text-embedding-3-small): genuinely related
+    // exchanges land <0.6, unrelated ones >0.85, so 0.75 drops noise without
+    // dropping real matches. Without this, every query injects the top-N
+    // memories even when nothing is actually relevant.
+    private static let maxRelevantDistance = 0.75
+
     private static let openAIEmbeddingModel = "text-embedding-3-small"
     private static let hfEmbeddingModel = "sentence-transformers/all-MiniLM-L6-v2"
 
@@ -136,7 +143,10 @@ actor ChromaDBClient {
                 guard let t = meta["transcript"] as? String,
                       let r = meta["response"] as? String
                 else { continue }
-                var score = idx < distGroup.count ? distGroup[idx] : Double(idx)
+                let distance: Double? = idx < distGroup.count ? distGroup[idx] : nil
+                // Drop clearly-irrelevant matches so unrelated queries inject nothing.
+                if let distance, distance > Self.maxRelevantDistance { continue }
+                var score = distance ?? Double(idx)
                 if let appBundleID, meta["app_bundle_id"] as? String == appBundleID {
                     score -= Self.sameAppBoost
                 }
