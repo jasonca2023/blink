@@ -1,6 +1,6 @@
 # Blink
 
-Blink is a native macOS menu-bar app that turns your cursor into a buttcheek. Hold ctrl+option to eat jason or double-tap ctrl to eat wesley. Blink captures your screen, understands what you're looking at, replies in voice, and can drive the UI on your behalf — click buttons, open apps, run searches, fill in text — through the macOS Accessibility tree (no pixel guessing).
+Blink is a native macOS menu-bar AI companion. Hold ctrl+option for voice push-to-talk, or double-tap ctrl for the text bar. Blink captures your screen, understands what you're looking at, replies in voice, and can drive the UI on your behalf — click buttons, open apps, run searches, fill in text — through the macOS Accessibility tree (no pixel guessing).
 
 ## Features
 
