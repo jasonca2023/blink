@@ -61,13 +61,11 @@ actor ChromaDBClient {
     func store(transcript: String, response: String, appBundleID: String? = nil, appName: String? = nil) async {
         print("🧠 ChromaDB: store called for: \(transcript.prefix(40))")
         do {
-            let colID = try await ensureCollection()
-
             // Embed the full exchange once; reuse it for the dedup check and the add.
             let document = "User: \(transcript)\nBlink: \(response)"
             let embedding = try await embed(document)
 
-            if let nearest = try await nearestDistance(embedding: embedding, collectionID: colID, appBundleID: appBundleID),
+            if let nearest = try await nearestDistance(embedding: embedding, appBundleID: appBundleID),
                nearest < 0.1 {
                 print("🧠 ChromaDB: skipping duplicate (distance \(String(format: "%.3f", nearest)))")
                 return
@@ -81,19 +79,13 @@ actor ChromaDBClient {
             if let appBundleID, !appBundleID.isEmpty { metadata["app_bundle_id"] = appBundleID }
             if let appName, !appName.isEmpty { metadata["app_name"] = appName }
 
-            let url = apiURL
-                .appendingPathComponent("tenants/\(tenant)/databases/\(database)/collections/\(colID)/add")
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.httpBody = try JSONSerialization.data(withJSONObject: [
+            let (data, http) = try await postToCollection(pathSuffix: "add", body: [
                 "ids": [UUID().uuidString],
                 "embeddings": [embedding],
                 "documents": [document],
                 "metadatas": [metadata]
             ])
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            if !(200...299).contains(http.statusCode) {
                 let body = String(data: data, encoding: .utf8) ?? ""
                 throw ChromaError.storeFailed("HTTP \(http.statusCode): \(body.prefix(200))")
             }
@@ -112,25 +104,16 @@ actor ChromaDBClient {
         maxResults: Int = 3
     ) async -> [(transcript: String, response: String)] {
         do {
-            let colID = try await ensureCollection()
-            let url = apiURL
-                .appendingPathComponent("tenants/\(tenant)/databases/\(database)/collections/\(colID)/query")
-            var req = URLRequest(url: url)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             // With an app in focus, pull a wider candidate set so same-app
             // memories can be promoted without dropping strong cross-app matches.
             let candidateCount = appBundleID == nil ? maxResults : maxResults + 3
             let queryEmbedding = try await embed(transcript)
-            req.httpBody = try JSONSerialization.data(withJSONObject: [
+            let (data, http) = try await postToCollection(pathSuffix: "query", body: [
                 "query_embeddings": [queryEmbedding],
                 "n_results": candidateCount,
                 "include": ["metadatas", "distances"]
             ])
-            let (data, response) = try await URLSession.shared.data(for: req)
-            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-                return []
-            }
+            guard (200...299).contains(http.statusCode) else { return [] }
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let metaOuter = json["metadatas"] as? [[[String: Any]]],
                   let metaGroup = metaOuter.first
@@ -168,12 +151,7 @@ actor ChromaDBClient {
     // collection is empty (in which case the caller should always store). When
     // `appBundleID` is supplied, dedup is scoped to that app so an identical
     // phrase said in a different app is still kept as its own memory.
-    private func nearestDistance(embedding: [Double], collectionID: String, appBundleID: String?) async throws -> Double? {
-        let url = apiURL
-            .appendingPathComponent("tenants/\(tenant)/databases/\(database)/collections/\(collectionID)/query")
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    private func nearestDistance(embedding: [Double], appBundleID: String?) async throws -> Double? {
         var body: [String: Any] = [
             "query_embeddings": [embedding],
             "n_results": 1,
@@ -182,11 +160,8 @@ actor ChromaDBClient {
         if let appBundleID, !appBundleID.isEmpty {
             body["where"] = ["app_bundle_id": appBundleID]
         }
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await URLSession.shared.data(for: req)
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            return nil
-        }
+        let (data, http) = try await postToCollection(pathSuffix: "query", body: body)
+        guard (200...299).contains(http.statusCode) else { return nil }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let outer = json["distances"] as? [[Double]],
               let first = outer.first?.first
@@ -223,6 +198,34 @@ actor ChromaDBClient {
         else { throw ChromaError.invalidResponse }
         collectionID = id
         return id
+    }
+
+    // POSTs to a collection sub-endpoint ("add"/"query"), resolving the
+    // collection id via ensureCollection(). If the cached id is stale — the
+    // collection was deleted/recreated out from under us, which ChromaDB
+    // answers with 404 — the cache is cleared and the call retried once against
+    // a freshly-resolved collection.
+    private func postToCollection(pathSuffix: String, body: [String: Any]) async throws -> (Data, HTTPURLResponse) {
+        let bodyData = try JSONSerialization.data(withJSONObject: body)
+        var result = try await sendToCollection(pathSuffix: pathSuffix, bodyData: bodyData)
+        if result.1.statusCode == 404 {
+            collectionID = nil
+            result = try await sendToCollection(pathSuffix: pathSuffix, bodyData: bodyData)
+        }
+        return result
+    }
+
+    private func sendToCollection(pathSuffix: String, bodyData: Data) async throws -> (Data, HTTPURLResponse) {
+        let colID = try await ensureCollection()
+        let url = apiURL
+            .appendingPathComponent("tenants/\(tenant)/databases/\(database)/collections/\(colID)/\(pathSuffix)")
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = bodyData
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse else { throw ChromaError.invalidResponse }
+        return (data, http)
     }
 
     // MARK: - Embedding
