@@ -25,7 +25,11 @@ actor BlinkSemanticIndex {
     }
 
     private let model = "sentence-transformers/all-MiniLM-L6-v2"
-    private let baseURL = URL(string: "https://api-inference.huggingface.co/pipeline/feature-extraction/")!
+    // HuggingFace retired api-inference.huggingface.co; feature-extraction now
+    // lives behind the router with the model in the middle of the path.
+    private var embeddingEndpoint: URL {
+        URL(string: "https://router.huggingface.co/hf-inference/models/\(model)/pipeline/feature-extraction")!
+    }
 
     private var vectors: [String: [Float]] = [:]
     private var ready = false
@@ -162,7 +166,7 @@ actor BlinkSemanticIndex {
             throw URLError(.userAuthenticationRequired)
         }
 
-        var request = URLRequest(url: baseURL.appendingPathComponent(model, isDirectory: false))
+        var request = URLRequest(url: embeddingEndpoint)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
