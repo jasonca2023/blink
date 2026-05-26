@@ -184,12 +184,16 @@ actor ChromaDBClient {
             return id
         }
 
-        // Create it.
+        // Create it. get_or_create makes this idempotent: if two calls race
+        // here before collectionID is cached (e.g. a query and a store on a
+        // fresh ~/blink-memory), both get the same collection back instead of
+        // one winning and the other throwing on a 409 "already exists".
         var req = URLRequest(url: base)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: [
             "name": collectionName,
+            "get_or_create": true,
             "metadata": ["hnsw:space": "cosine"]
         ])
         let (data, _) = try await URLSession.shared.data(for: req)
