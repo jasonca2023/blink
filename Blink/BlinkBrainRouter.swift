@@ -207,6 +207,14 @@ final class BlinkBrainRouter {
             companionManager.brainRememberExchange(transcript: transcript, response: searchSpoken)
             return DispatchResult(handled: true, isTerminal: true)
 
+        case "forget_memory":
+            guard let topic = toolCall.arguments["topic"] as? String,
+                  !topic.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return DispatchResult(handled: false, isTerminal: true)
+            }
+            companionManager.brainForget(topic: topic)
+            return DispatchResult(handled: true, isTerminal: true)
+
         case "press_keys":
             guard let combo = toolCall.arguments["combo"] as? String, !combo.isEmpty else {
                 return DispatchResult(handled: false, isTerminal: false)
@@ -267,6 +275,7 @@ final class BlinkBrainRouter {
     - speak_answer for factual / conversational replies (no UI action). Setting needs_visual=true only for places, food, nature, animals, products, recipes.
     - run_background_agent for ANY work that involves writing, editing, generating, refactoring, building, debugging, or researching source code, scripts, configuration, or content. Examples that ALWAYS go to run_background_agent: "code a website", "build a python script", "make me a chrome extension", "write a SwiftUI view that…", "refactor this file", "fix the bug in…", "set up a node project", "write tests for…", "research X and write it up". NEVER open Terminal, Xcode, Cursor, VS Code, or any editor to type code yourself via type_text — that wastes the user's foreground. Hand the instruction to run_background_agent and call finish_task.
     - web_search for explicit "google X" requests.
+    - forget_memory when the user explicitly asks to forget or delete something they told you before ("forget what I said about my dog", "delete my home address", "forget that"). Pass a short topic describing what to forget.
     - finish_task ALWAYS at the end of a multi-step task once everything is done. Provide a 4-10 word summary that will be spoken aloud.
 
     Example — "code me a website that tracks sleep":
@@ -406,6 +415,21 @@ final class BlinkBrainRouter {
                         "query": ["type": "string"]
                     ],
                     "required": ["query"],
+                    "additionalProperties": false
+                ]
+            ]
+        ],
+        [
+            "type": "function",
+            "function": [
+                "name": "forget_memory",
+                "description": "Delete stored conversation memories about a topic. Use only when the user explicitly asks you to forget or delete something they told you earlier.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "topic": ["type": "string", "description": "Short description of what to forget, e.g. 'my dog' or 'my home address'"]
+                    ],
+                    "required": ["topic"],
                     "additionalProperties": false
                 ]
             ]

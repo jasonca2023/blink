@@ -466,6 +466,46 @@ final class CompanionManager: ObservableObject {
         )
     }
 
+    // MARK: - Conversation memory (ChromaDB) — Settings bridge
+
+    /// Reachability, count, and provider-mismatch status for the memory panel.
+    func chromaMemoryStatus() async -> ChromaMemoryStatus {
+        await chromaDB.status()
+    }
+
+    /// All stored exchanges, newest first, for the memory inspector.
+    func chromaAllMemories() async -> [ChromaMemoryRecord] {
+        await chromaDB.allMemories()
+    }
+
+    /// Delete a single stored exchange by id.
+    func chromaDeleteMemory(id: String) async {
+        await chromaDB.deleteMemory(id: id)
+    }
+
+    /// Clear every stored exchange (also resets the vector dimension, so this
+    /// doubles as the fix when the embedding provider changed).
+    func chromaClearAllMemories() async {
+        await chromaDB.clearAllMemories()
+    }
+
+    /// Voice "forget X": delete clearly-matching stored memories, then speak a
+    /// short confirmation. Not itself remembered.
+    func brainForget(topic: String) {
+        let trimmed = topic.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        Task {
+            let removed = await chromaDB.forget(matching: trimmed)
+            let spoken: String
+            if removed == 0 {
+                spoken = "I didn't have anything stored about \(trimmed)."
+            } else {
+                spoken = "Forgot \(removed) thing\(removed == 1 ? "" : "s") about \(trimmed)."
+            }
+            brainSpeak(spoken)
+        }
+    }
+
     /// Opens a Mac app by display name. Reuses the existing native-CUA
     /// app-open path so confirmation + analytics work the same.
     func brainOpenApp(_ appName: String) {

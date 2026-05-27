@@ -176,6 +176,11 @@ struct BlinkSettingsView: View {
     @State private var semanticIndexReady = false
     @State private var semanticIndexCount = 0
     @State private var semanticIndexModel = ""
+    @State private var chromaStatus: ChromaMemoryStatus?
+    @State private var chromaMemories: [ChromaMemoryRecord] = []
+    @State private var chromaMemoriesLoaded = false
+    @State private var chromaBusy = false
+    @State private var hoveredMemoryID: String?
     @State private var clickTesterX: String = ""
     @State private var clickTesterY: String = ""
     @State private var clickTesterStatus: String = "Ready. Coordinates are global screen pixels (origin top-left)."
@@ -1238,6 +1243,8 @@ struct BlinkSettingsView: View {
 
     private var memoryPanel: some View {
         VStack(alignment: .leading, spacing: 14) {
+            conversationMemoryGroup
+
             settingsGroup("Semantic knowledge index") {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Blink embeds its bundled app-help corpus (Onshape, Blender, Photoshop, Illustrator, Figma) with all-MiniLM-L6-v2 via HuggingFace, then retrieves the top matches when you ask a how-to question. Falls back to lexical retrieval if the index isn't ready.")
@@ -1308,6 +1315,334 @@ struct BlinkSettingsView: View {
                 }
             }
         }
+    }
+
+    private var conversationMemoryGroup: some View {
+        settingsGroup("Conversation memory") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Blink remembers what you tell it across sessions in a local ChromaDB store, scoped to the app you're in. Recall is automatic; you can review or delete what's saved here, or just say \"forget what I said about …\". Needs the server: chroma run --path ~/blink-memory --port 8001")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 14) {
+                    conversationMemoryStatusChip
+                    Spacer()
+                    Button {
+                        Task { await loadChromaStatus(); await loadChromaMemories() }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("Refresh")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(chromaBusy)
+                }
+
+                if let status = chromaStatus, status.providerMismatch {
+                    conversationMemoryMismatchWarning(status)
+                }
+
+                if let status = chromaStatus, status.reachable {
+                    conversationMemoryList(count: status.count)
+                }
+            }
+            .padding(14)
+            .onAppear {
+                Task { await loadChromaStatus() }
+            }
+        }
+    }
+
+    private var conversationMemoryStatusChip: some View {
+        let accent = (BlinkAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor
+        let reachable = chromaStatus?.reachable ?? false
+        let count = chromaStatus?.count ?? 0
+        let model = chromaStatus?.currentModel
+        let dotColor = reachable ? DS.Colors.success : DS.Colors.warning
+        return HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(accent.opacity(0.16))
+                Image(systemName: "brain.head.profile")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(accent)
+            }
+            .frame(width: 34, height: 34)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Circle().fill(dotColor).frame(width: 6, height: 6)
+                    Text(reachable ? "\(count) stored exchange\(count == 1 ? "" : "s")" : "Server offline")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                }
+                Text(reachable ? (model ?? "no embedding key configured") : "Start it on :8001 to enable recall")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.Colors.textTertiary)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(accent.opacity(0.20), lineWidth: 0.8)
+        )
+    }
+
+    private func conversationMemoryMismatchWarning(_ status: ChromaMemoryStatus) -> some View {
+        HStack(alignment: .top, spacing: 11) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(DS.Colors.warning.opacity(0.18))
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(DS.Colors.warning)
+            }
+            .frame(width: 30, height: 30)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Embedding model changed")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(DS.Colors.textPrimary)
+                Text("This store was built with \(status.storedModel ?? "another model"), but Blink now embeds with \(status.currentModel ?? "a different model"). Saved memories can't be read until the store is reset.")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(role: .destructive) {
+                    Task { await resetChromaMemory() }
+                } label: {
+                    Text("Reset memory")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .controlSize(.small)
+                .disabled(chromaBusy)
+                .padding(.top, 2)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(DS.Colors.warning.opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(DS.Colors.warning.opacity(0.30), lineWidth: 0.8)
+        )
+    }
+
+    private func conversationMemoryList(count: Int) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Stored memories")
+                    .font(.system(size: 11, weight: .bold))
+                    .tracking(0.7)
+                    .foregroundColor(DS.Colors.textTertiary)
+                if chromaMemoriesLoaded, !chromaMemories.isEmpty {
+                    Text("\(chromaMemories.count)")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.white.opacity(0.07)))
+                }
+                Spacer()
+                if !chromaMemoriesLoaded {
+                    Button("Show") {
+                        Task { await loadChromaMemories() }
+                    }
+                    .controlSize(.small)
+                    .disabled(chromaBusy || count == 0)
+                } else if !chromaMemories.isEmpty {
+                    Button(role: .destructive) {
+                        Task { await forgetAllChroma() }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "trash")
+                            Text("Forget all")
+                        }
+                    }
+                    .controlSize(.small)
+                    .disabled(chromaBusy)
+                }
+            }
+
+            if chromaMemoriesLoaded {
+                if chromaMemories.isEmpty {
+                    VStack(spacing: 7) {
+                        Image(systemName: "tray")
+                            .font(.system(size: 20, weight: .light))
+                            .foregroundColor(DS.Colors.textTertiary)
+                        Text("Nothing stored yet")
+                            .font(.system(size: 11))
+                            .foregroundColor(DS.Colors.textTertiary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 7) {
+                            ForEach(chromaMemories) { record in
+                                conversationMemoryRow(record)
+                            }
+                        }
+                        .padding(.vertical, 1)
+                    }
+                    .frame(maxHeight: 300)
+                }
+            }
+        }
+    }
+
+    private func conversationMemoryRow(_ record: ChromaMemoryRecord) -> some View {
+        let accent = (BlinkAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor
+        let hovered = hoveredMemoryID == record.id
+        return HStack(alignment: .top, spacing: 0) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(accent.opacity(hovered ? 0.9 : 0.45))
+                .frame(width: 3)
+                .padding(.vertical, 2)
+
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 6) {
+                    if let app = record.appName, !app.isEmpty {
+                        HStack(spacing: 4) {
+                            Image(systemName: "app.dashed")
+                                .font(.system(size: 9, weight: .semibold))
+                            Text(app)
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.white.opacity(0.06)))
+                    }
+                    if let time = record.timestamp.flatMap(Self.relativeMemoryTimestamp) {
+                        Text(time)
+                            .font(.system(size: 10))
+                            .foregroundColor(DS.Colors.textTertiary)
+                    }
+                    Spacer(minLength: 8)
+                    Button {
+                        Task { await deleteChroma(record) }
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(hovered ? DS.Colors.destructiveText : DS.Colors.textTertiary)
+                            .frame(width: 24, height: 24)
+                            .background(Circle().fill(Color.white.opacity(hovered ? 0.07 : 0)))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(chromaBusy)
+                    .help("Delete this memory")
+                }
+
+                conversationMemoryMessageLine(
+                    icon: "person.fill",
+                    iconColor: accent,
+                    text: record.transcript.isEmpty ? "(no transcript)" : record.transcript,
+                    textColor: DS.Colors.textPrimary
+                )
+                if !record.response.isEmpty {
+                    conversationMemoryMessageLine(
+                        icon: "sparkles",
+                        iconColor: DS.Colors.textTertiary,
+                        text: record.response,
+                        textColor: DS.Colors.textSecondary
+                    )
+                }
+            }
+            .padding(.leading, 10)
+            .padding(.trailing, 10)
+            .padding(.vertical, 9)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(hovered ? 0.06 : 0.03))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.white.opacity(hovered ? 0.10 : 0.05), lineWidth: 0.8)
+        )
+        .contentShape(Rectangle())
+        .onHover { isHovering in
+            if isHovering {
+                hoveredMemoryID = record.id
+            } else if hoveredMemoryID == record.id {
+                hoveredMemoryID = nil
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: hovered)
+    }
+
+    private func conversationMemoryMessageLine(icon: String, iconColor: Color, text: String, textColor: Color) -> some View {
+        HStack(alignment: .top, spacing: 7) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundColor(iconColor)
+                .frame(width: 13, height: 13)
+                .padding(.top, 2)
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundColor(textColor)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private static func relativeMemoryTimestamp(_ iso: String) -> String? {
+        let parser = ISO8601DateFormatter()
+        guard let date = parser.date(from: iso) else { return nil }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    @MainActor private func loadChromaStatus() async {
+        chromaStatus = await companionManager.chromaMemoryStatus()
+    }
+
+    @MainActor private func loadChromaMemories() async {
+        chromaBusy = true
+        chromaMemories = await companionManager.chromaAllMemories()
+        chromaMemoriesLoaded = true
+        chromaBusy = false
+    }
+
+    @MainActor private func deleteChroma(_ record: ChromaMemoryRecord) async {
+        chromaBusy = true
+        await companionManager.chromaDeleteMemory(id: record.id)
+        chromaMemories.removeAll { $0.id == record.id }
+        chromaBusy = false
+        await loadChromaStatus()
+    }
+
+    @MainActor private func forgetAllChroma() async {
+        chromaBusy = true
+        await companionManager.chromaClearAllMemories()
+        chromaMemories = []
+        chromaBusy = false
+        await loadChromaStatus()
+    }
+
+    @MainActor private func resetChromaMemory() async {
+        chromaBusy = true
+        await companionManager.chromaClearAllMemories()
+        chromaMemories = []
+        chromaMemoriesLoaded = false
+        chromaBusy = false
+        await loadChromaStatus()
     }
 
     private var appPanel: some View {

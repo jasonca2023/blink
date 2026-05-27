@@ -55,6 +55,23 @@ actor ChromaDBClient {
     private static let openAIEmbeddingModel = "text-embedding-3-small"
     private static let hfEmbeddingModel = "sentence-transformers/all-MiniLM-L6-v2"
 
+    // Hard cap on stored exchanges. Oldest are pruned past this so the local
+    // store stays bounded. Checked periodically (every pruneCheckInterval
+    // stores) rather than on every write.
+    private static let maxStoredMemories = 1000
+    private static let pruneCheckInterval = 20
+    private var storeCountSinceLaunch = 0
+
+    // The embedding model the live collection was built with, read from its
+    // metadata. Used to detect a provider switch — which changes the vector
+    // dimension and silently breaks add/query until the store is reset.
+    private var storedEmbeddingModel: String?
+
+    // Max cosine distance for a memory to be deleted by a "forget X" request.
+    // Stricter than recall (maxRelevantDistance) because deletion is
+    // destructive: only remove clearly-matching memories.
+    private static let forgetMatchDistance = 0.6
+
     /// Persist a conversation turn, tagged with the app that was focused when it
     /// happened. Skips storage if a semantically identical exchange already
     /// exists in the same app (cosine distance < 0.1). Fire-and-forget.
@@ -89,6 +106,7 @@ actor ChromaDBClient {
                 let body = String(data: data, encoding: .utf8) ?? ""
                 throw ChromaError.storeFailed("HTTP \(http.statusCode): \(body.prefix(200))")
             }
+            await pruneIfNeeded()
         } catch {
             print("⚠️ ChromaDB store error: \(error)")
         }
@@ -145,7 +163,145 @@ actor ChromaDBClient {
         }
     }
 
+    // MARK: - Management
+
+    /// Snapshot for the Settings memory panel: server reachability, stored
+    /// count, the model new embeddings would use, and the model the collection
+    /// was actually built with (so the UI can warn on a provider switch).
+    func status() async -> ChromaMemoryStatus {
+        let current = currentEmbeddingModel()
+        guard await isReachable() else {
+            return ChromaMemoryStatus(reachable: false, count: 0, currentModel: current, storedModel: nil)
+        }
+        let count = (try? await collectionCount()) ?? 0
+        return ChromaMemoryStatus(reachable: true, count: count, currentModel: current, storedModel: storedEmbeddingModel)
+    }
+
+    /// Every stored exchange, newest first, for the memory inspector.
+    func allMemories(limit: Int = 500) async -> [ChromaMemoryRecord] {
+        do {
+            let (data, http) = try await postToCollection(pathSuffix: "get", body: [
+                "include": ["metadatas"],
+                "limit": limit
+            ])
+            guard (200...299).contains(http.statusCode),
+                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let ids = json["ids"] as? [String]
+            else { return [] }
+            let metas = (json["metadatas"] as? [[String: Any]]) ?? []
+            let records = ids.enumerated().map { (idx, id) -> ChromaMemoryRecord in
+                let meta = idx < metas.count ? metas[idx] : [:]
+                return ChromaMemoryRecord(
+                    id: id,
+                    transcript: meta["transcript"] as? String ?? "",
+                    response: meta["response"] as? String ?? "",
+                    appName: meta["app_name"] as? String,
+                    timestamp: meta["timestamp"] as? String
+                )
+            }
+            return records.sorted { ($0.timestamp ?? "") > ($1.timestamp ?? "") }
+        } catch {
+            print("⚠️ ChromaDB allMemories error: \(error)")
+            return []
+        }
+    }
+
+    /// Delete a single stored exchange by id.
+    func deleteMemory(id: String) async {
+        _ = try? await postToCollection(pathSuffix: "delete", body: ["ids": [id]])
+    }
+
+    /// Drop the whole collection. Used by "Forget all" and by the provider-
+    /// switch reset (deleting the collection also clears the old vector
+    /// dimension). It is recreated lazily — with the current model's tag — on
+    /// the next store or query.
+    func clearAllMemories() async {
+        let url = apiURL.appendingPathComponent("tenants/\(tenant)/databases/\(database)/collections/\(collectionName)")
+        var req = URLRequest(url: url)
+        req.httpMethod = "DELETE"
+        _ = try? await URLSession.shared.data(for: req)
+        collectionID = nil
+        storedEmbeddingModel = nil
+    }
+
+    /// Semantic "forget": delete stored exchanges that clearly match a topic.
+    /// Returns the number removed. Conservative threshold so an off-target
+    /// phrase doesn't wipe unrelated memories.
+    func forget(matching query: String, maxCandidates: Int = 10) async -> Int {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return 0 }
+        do {
+            let queryEmbedding = try await embed(trimmed)
+            let (data, http) = try await postToCollection(pathSuffix: "query", body: [
+                "query_embeddings": [queryEmbedding],
+                "n_results": maxCandidates,
+                "include": ["distances"]
+            ])
+            guard (200...299).contains(http.statusCode),
+                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let ids = (json["ids"] as? [[String]])?.first
+            else { return 0 }
+            let distances = (json["distances"] as? [[Double]])?.first ?? []
+            var toDelete: [String] = []
+            for (idx, id) in ids.enumerated() {
+                let distance = idx < distances.count ? distances[idx] : Double.greatestFiniteMagnitude
+                if distance <= Self.forgetMatchDistance { toDelete.append(id) }
+            }
+            guard !toDelete.isEmpty else { return 0 }
+            _ = try await postToCollection(pathSuffix: "delete", body: ["ids": toDelete])
+            return toDelete.count
+        } catch {
+            print("⚠️ ChromaDB forget error: \(error)")
+            return 0
+        }
+    }
+
     // MARK: - Private
+
+    // The model embed() would use right now, mirroring its provider preference
+    // (OpenAI when keyed, else HuggingFace). nil when neither key is present.
+    private func currentEmbeddingModel() -> String? {
+        if let key = AppBundleConfiguration.openAIAPIKey(), !key.isEmpty {
+            return Self.openAIEmbeddingModel
+        }
+        if let key = AppBundleConfiguration.huggingFaceAPIKey(), !key.isEmpty {
+            return Self.hfEmbeddingModel
+        }
+        return nil
+    }
+
+    // Stored-document count. The /count endpoint returns a bare integer.
+    private func collectionCount() async throws -> Int {
+        let colID = try await ensureCollection()
+        let url = apiURL.appendingPathComponent("tenants/\(tenant)/databases/\(database)/collections/\(colID)/count")
+        let (data, resp) = try await URLSession.shared.data(from: url)
+        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return 0 }
+        if let n = try? JSONSerialization.jsonObject(with: data) as? Int { return n }
+        if let s = String(data: data, encoding: .utf8),
+           let n = Int(s.trimmingCharacters(in: .whitespacesAndNewlines)) { return n }
+        return 0
+    }
+
+    // Trims the store back to maxStoredMemories by deleting the oldest
+    // exchanges. Throttled so it isn't a full scan on every write.
+    private func pruneIfNeeded() async {
+        storeCountSinceLaunch += 1
+        guard storeCountSinceLaunch % Self.pruneCheckInterval == 1 else { return }
+        guard let count = try? await collectionCount(), count > Self.maxStoredMemories else { return }
+        guard let (data, http) = try? await postToCollection(pathSuffix: "get", body: ["include": ["metadatas"]]),
+              (200...299).contains(http.statusCode),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let ids = json["ids"] as? [String]
+        else { return }
+        let metas = (json["metadatas"] as? [[String: Any]]) ?? []
+        let paired = ids.enumerated().map { (idx, id) in
+            (id: id, timestamp: idx < metas.count ? (metas[idx]["timestamp"] as? String ?? "") : "")
+        }
+        let overflow = count - Self.maxStoredMemories
+        let oldest = paired.sorted { $0.timestamp < $1.timestamp }.prefix(overflow).map { $0.id }
+        guard !oldest.isEmpty else { return }
+        _ = try? await postToCollection(pathSuffix: "delete", body: ["ids": oldest])
+    }
 
     // Returns the cosine distance to the closest stored document, or nil if the
     // collection is empty (in which case the caller should always store). When
@@ -180,6 +336,7 @@ actor ChromaDBClient {
            let http = resp as? HTTPURLResponse, http.statusCode == 200,
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let id = json["id"] as? String {
+            storedEmbeddingModel = (json["metadata"] as? [String: Any])?["embedding_model"] as? String
             collectionID = id
             return id
         }
@@ -187,19 +344,26 @@ actor ChromaDBClient {
         // Create it. get_or_create makes this idempotent: if two calls race
         // here before collectionID is cached (e.g. a query and a store on a
         // fresh ~/blink-memory), both get the same collection back instead of
-        // one winning and the other throwing on a 409 "already exists".
+        // one winning and the other throwing on a 409 "already exists". Tag the
+        // collection with the embedding model that produced its vectors so a
+        // later provider switch (different dimension) can be detected.
+        var createMetadata: [String: Any] = ["hnsw:space": "cosine"]
+        if let model = currentEmbeddingModel() {
+            createMetadata["embedding_model"] = model
+        }
         var req = URLRequest(url: base)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: [
             "name": collectionName,
             "get_or_create": true,
-            "metadata": ["hnsw:space": "cosine"]
+            "metadata": createMetadata
         ])
         let (data, _) = try await URLSession.shared.data(for: req)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let id = json["id"] as? String
         else { throw ChromaError.invalidResponse }
+        storedEmbeddingModel = (json["metadata"] as? [String: Any])?["embedding_model"] as? String
         collectionID = id
         return id
     }
@@ -304,4 +468,29 @@ enum ChromaError: Error {
     case storeFailed(String)
     case embeddingFailed(String)
     case noEmbeddingProvider
+}
+
+/// One stored conversation exchange, surfaced to the Settings memory inspector.
+struct ChromaMemoryRecord: Identifiable, Sendable {
+    let id: String
+    let transcript: String
+    let response: String
+    let appName: String?
+    let timestamp: String?
+}
+
+/// Conversation-memory health for the Settings panel.
+struct ChromaMemoryStatus: Sendable {
+    let reachable: Bool
+    let count: Int
+    let currentModel: String?
+    let storedModel: String?
+
+    /// True when the collection was built with a different embedding model than
+    /// the one in use now — its vectors have the wrong dimension, so add/query
+    /// silently fail until the store is reset.
+    var providerMismatch: Bool {
+        guard let stored = storedModel, let current = currentModel else { return false }
+        return stored != current
+    }
 }
