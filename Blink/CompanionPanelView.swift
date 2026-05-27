@@ -86,15 +86,55 @@ struct CompanionPanelView: View {
             alignment: .topLeading
         )
         .background(panelBackground)
+        .onAppear {
+            companionManager.startMemoryServerMonitorIfNeeded()
+        }
         .onChange(of: companionManager.isAdvancedModeEnabled) {
             schedulePanelContentSizeRefresh()
         }
         .animation(.none, value: selectedAccentThemeID)
     }
 
+    // A subtle hint when the user has memory configured but the local ChromaDB
+    // server isn't answering. One-click Start launches it (or copies the
+    // command if no chroma binary is found).
+    @ViewBuilder
+    private var memoryServerBanner: some View {
+        if companionManager.memoryServerExpected,
+           companionManager.memoryServerStatusKnown,
+           !companionManager.isMemoryServerReachable {
+            HStack(spacing: 8) {
+                Image(systemName: "brain.head.profile")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DS.Colors.warning)
+                Text("Memory off — server not running")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.Colors.textSecondary)
+                Spacer()
+                Button {
+                    companionManager.startMemoryServer()
+                } label: {
+                    Text(companionManager.isStartingMemoryServer ? "Starting…" : "Start")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(DS.Colors.textOnAccent)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(DS.Colors.accent))
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .disabled(companionManager.isStartingMemoryServer)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(DS.Colors.warning.opacity(0.10))
+        }
+    }
+
     private var mainPanelContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             panelHeader
+            memoryServerBanner
             Divider()
                 .background(DS.Colors.borderSubtle)
                 .padding(.horizontal, 12)

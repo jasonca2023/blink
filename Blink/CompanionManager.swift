@@ -340,6 +340,14 @@ final class CompanionManager: ObservableObject {
 
     private let chromaDB = ChromaDBClient.shared
 
+    /// Whether the local ChromaDB memory server answered its last reachability
+    /// probe. Starts true so the UI doesn't flash "offline" before the first
+    /// check; `memoryServerStatusKnown` gates display until a probe has run.
+    @Published private(set) var isMemoryServerReachable = true
+    @Published private(set) var memoryServerStatusKnown = false
+    @Published private(set) var isStartingMemoryServer = false
+    private var memoryServerMonitorTask: Task<Void, Never>?
+
     // App focused when the current brain-router utterance began. Captured up
     // front so a memory is tagged with the app the user was actually in, even
     // if an action (open_url, open_app) changes focus before it is stored.
@@ -399,7 +407,7 @@ final class CompanionManager: ObservableObject {
             enrichedTranscript = transcript
         } else {
             let lines = memories
-                .map { "- \"\($0.transcript)\" → \"\($0.response)\"" }
+                .map { $0.response.isEmpty ? "- \($0.transcript)" : "- \"\($0.transcript)\" → \"\($0.response)\"" }
                 .joined(separator: "\n")
             enrichedTranscript = "\(transcript)\n\n[past relevant exchanges:\n\(lines)]"
             print("🧠 ChromaDB: injected \(memories.count) relevant memories into brain router")
@@ -504,6 +512,110 @@ final class CompanionManager: ObservableObject {
             }
             brainSpeak(spoken)
         }
+    }
+
+    /// Voice "remember this": pin a deliberately-stated fact as a high-priority
+    /// memory, tagged with the focused app, and confirm aloud. Also seeds the
+    /// short-term history so it's recalled immediately, not just next session.
+    func brainRememberFact(_ fact: String) {
+        let trimmed = fact.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let appBundleID = brainRoutingAppBundleID
+        let appName = brainRoutingAppName
+        Task { await chromaDB.storePinned(fact: trimmed, appBundleID: appBundleID, appName: appName) }
+        rememberVoiceExchange(userTranscript: trimmed, assistantResponse: "Noted.", reason: "remember_fact")
+        brainSpeak("Got it. I'll remember that.")
+    }
+
+    /// Modal confirmation for an irreversible agent action (close, quit, delete,
+    /// send…). Returns true only if the user explicitly approves. Synchronous on
+    /// the main actor — the brain-router dispatch awaits the user before acting.
+    func confirmRiskyAction(_ description: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Confirm this action?"
+        alert.informativeText = description
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Proceed")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    // MARK: - Memory server (ChromaDB) availability
+
+    /// True when the user has the pieces for memory (an embedding key); only
+    /// then is a "server is down" hint worth showing.
+    var memoryServerExpected: Bool {
+        if let key = AppBundleConfiguration.openAIAPIKey(), !key.isEmpty { return true }
+        if let key = AppBundleConfiguration.huggingFaceAPIKey(), !key.isEmpty { return true }
+        return false
+    }
+
+    /// Probe the server once and publish the result.
+    func refreshMemoryServerReachability() async {
+        let reachable = await chromaDB.isReachable()
+        isMemoryServerReachable = reachable
+        memoryServerStatusKnown = true
+    }
+
+    /// Begin a light background poll so the indicator stays current while the
+    /// app is open. Idempotent.
+    func startMemoryServerMonitorIfNeeded() {
+        guard memoryServerMonitorTask == nil else { return }
+        memoryServerMonitorTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.refreshMemoryServerReachability()
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+            }
+        }
+    }
+
+    /// One-click "start the memory server". Launches a local chroma binary if one
+    /// can be found, then polls until it answers. If no binary is found, copies
+    /// the setup command to the clipboard so the user can run it themselves.
+    func startMemoryServer() {
+        guard !isStartingMemoryServer else { return }
+        isStartingMemoryServer = true
+        Task { await startMemoryServerAsync() }
+    }
+
+    private func startMemoryServerAsync() async {
+        defer { isStartingMemoryServer = false }
+
+        let home = NSHomeDirectory()
+        let candidatePaths = [
+            "\(home)/.blink-chroma-venv/bin/chroma",
+            "/opt/homebrew/bin/chroma",
+            "/usr/local/bin/chroma"
+        ]
+        let fileManager = FileManager.default
+        guard let chromaPath = candidatePaths.first(where: { fileManager.isExecutableFile(atPath: $0) }) else {
+            let command = "chroma run --path ~/blink-memory --port 8001"
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(command, forType: .string)
+            speakShortSystemResponse("I couldn't find ChromaDB. I copied the start command to your clipboard.")
+            return
+        }
+
+        let memoryPath = "\(home)/blink-memory"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: chromaPath)
+        process.arguments = ["run", "--path", memoryPath, "--port", "8001"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            print("startMemoryServer error: \(error.localizedDescription)")
+            return
+        }
+
+        // Poll for readiness (chroma takes a few seconds to bind the port).
+        for _ in 0..<24 {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            if await chromaDB.isReachable() { break }
+        }
+        await refreshMemoryServerReachability()
     }
 
     /// Opens a Mac app by display name. Reuses the existing native-CUA
@@ -10863,7 +10975,7 @@ final class CompanionManager: ObservableObject {
                     chromaContext = ""
                 } else {
                     let lines = chromaMemories
-                        .map { "- they said \"\($0.transcript)\" and you replied \"\($0.response)\"" }
+                        .map { $0.response.isEmpty ? "- remember: \($0.transcript)" : "- they said \"\($0.transcript)\" and you replied \"\($0.response)\"" }
                         .joined(separator: "\n")
                     chromaContext = "past relevant exchanges (use for context, don't mention unless asked):\n\(lines)"
                     print("🧠 ChromaDB: injected \(chromaMemories.count) relevant memories")

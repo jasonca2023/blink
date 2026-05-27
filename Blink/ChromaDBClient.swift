@@ -45,6 +45,12 @@ actor ChromaDBClient {
     // current request, so they rank above equally-relevant cross-app ones.
     private static let sameAppBoost = 0.15
 
+    // Pinned ("remember this") facts outrank incidental exchanges and tolerate a
+    // looser distance, so a deliberately-saved fact still surfaces on a fuzzier
+    // query than a normal exchange would.
+    private static let pinnedBoost = 0.30
+    private static let pinnedDistanceSlack = 0.15
+
     // Max cosine distance for a memory to count as relevant. Tuned for the
     // default embedding model (text-embedding-3-small): genuinely related
     // exchanges land <0.6, unrelated ones >0.85, so 0.75 drops noise without
@@ -112,6 +118,40 @@ actor ChromaDBClient {
         }
     }
 
+    /// Persist a deliberately-remembered fact ("remember my key is in ~/.config").
+    /// Stored with pinned=true so recall ranks it above incidental exchanges and
+    /// pruning never removes it. The fact lives in `transcript`; `response` is
+    /// empty so callers render it as a standalone fact.
+    func storePinned(fact: String, appBundleID: String? = nil, appName: String? = nil) async {
+        let trimmed = fact.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        print("🧠 ChromaDB: storePinned: \(trimmed.prefix(40))")
+        do {
+            let embedding = try await embed(trimmed)
+            var metadata: [String: String] = [
+                "transcript": trimmed,
+                "response": "",
+                "pinned": "true",
+                "timestamp": Self.dateFormatter.string(from: Date())
+            ]
+            if let appBundleID, !appBundleID.isEmpty { metadata["app_bundle_id"] = appBundleID }
+            if let appName, !appName.isEmpty { metadata["app_name"] = appName }
+
+            let (data, http) = try await postToCollection(pathSuffix: "add", body: [
+                "ids": [UUID().uuidString],
+                "embeddings": [embedding],
+                "documents": [trimmed],
+                "metadatas": [metadata]
+            ])
+            if !(200...299).contains(http.statusCode) {
+                let body = String(data: data, encoding: .utf8) ?? ""
+                throw ChromaError.storeFailed("HTTP \(http.statusCode): \(body.prefix(200))")
+            }
+        } catch {
+            print("⚠️ ChromaDB storePinned error: \(error)")
+        }
+    }
+
     /// Semantic search for past exchanges relevant to the current transcript.
     /// When `appBundleID` is supplied, memories recorded in that same app are
     /// promoted in the ranking. Returns empty if ChromaDB is unreachable or has
@@ -144,11 +184,16 @@ actor ChromaDBClient {
                 guard let t = meta["transcript"] as? String,
                       let r = meta["response"] as? String
                 else { continue }
+                let isPinned = (meta["pinned"] as? String) == "true"
                 let distance: Double? = idx < distGroup.count ? distGroup[idx] : nil
-                // Drop clearly-irrelevant matches so unrelated queries inject nothing.
-                if let distance, distance > Self.maxRelevantDistance { continue }
+                // Drop clearly-irrelevant matches so unrelated queries inject
+                // nothing. Pinned facts get extra slack and a stronger boost.
+                let threshold = isPinned ? Self.maxRelevantDistance + Self.pinnedDistanceSlack : Self.maxRelevantDistance
+                if let distance, distance > threshold { continue }
                 var score = distance ?? Double(idx)
-                if let appBundleID, meta["app_bundle_id"] as? String == appBundleID {
+                if isPinned {
+                    score -= Self.pinnedBoost
+                } else if let appBundleID, meta["app_bundle_id"] as? String == appBundleID {
                     score -= Self.sameAppBoost
                 }
                 scored.append((transcript: t, response: r, score: score))
@@ -294,11 +339,14 @@ actor ChromaDBClient {
               let ids = json["ids"] as? [String]
         else { return }
         let metas = (json["metadatas"] as? [[String: Any]]) ?? []
-        let paired = ids.enumerated().map { (idx, id) in
-            (id: id, timestamp: idx < metas.count ? (metas[idx]["timestamp"] as? String ?? "") : "")
+        // Never prune pinned facts — they're deliberately remembered.
+        let prunable = ids.enumerated().compactMap { (idx, id) -> (id: String, timestamp: String)? in
+            let meta = idx < metas.count ? metas[idx] : [:]
+            if (meta["pinned"] as? String) == "true" { return nil }
+            return (id: id, timestamp: meta["timestamp"] as? String ?? "")
         }
         let overflow = count - Self.maxStoredMemories
-        let oldest = paired.sorted { $0.timestamp < $1.timestamp }.prefix(overflow).map { $0.id }
+        let oldest = prunable.sorted { $0.timestamp < $1.timestamp }.prefix(overflow).map { $0.id }
         guard !oldest.isEmpty else { return }
         _ = try? await postToCollection(pathSuffix: "delete", body: ["ids": oldest])
     }

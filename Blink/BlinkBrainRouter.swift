@@ -215,9 +215,22 @@ final class BlinkBrainRouter {
             companionManager.brainForget(topic: topic)
             return DispatchResult(handled: true, isTerminal: true)
 
+        case "remember_fact":
+            guard let fact = toolCall.arguments["fact"] as? String,
+                  !fact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return DispatchResult(handled: false, isTerminal: true)
+            }
+            companionManager.brainRememberFact(fact)
+            return DispatchResult(handled: true, isTerminal: true)
+
         case "press_keys":
             guard let combo = toolCall.arguments["combo"] as? String, !combo.isEmpty else {
                 return DispatchResult(handled: false, isTerminal: false)
+            }
+            if let risk = Self.riskyKeyComboDescription(combo),
+               !companionManager.confirmRiskyAction("Blink wants to \(risk).") {
+                companionManager.brainSpeak("Okay, I'll hold off.")
+                return DispatchResult(handled: false, isTerminal: true)
             }
             companionManager.brainPressKeys(combo: combo)
             return DispatchResult(handled: true, isTerminal: false)
@@ -235,12 +248,56 @@ final class BlinkBrainRouter {
                 return DispatchResult(handled: false, isTerminal: false)
             }
             let label = toolCall.arguments["label"] as? String
+            if let risk = Self.riskyClickDescription(label: label),
+               !companionManager.confirmRiskyAction("Blink wants to \(risk).") {
+                companionManager.brainSpeak("Okay, I'll hold off.")
+                return DispatchResult(handled: false, isTerminal: true)
+            }
             companionManager.brainClickAt(x: x, y: y, label: label)
             return DispatchResult(handled: true, isTerminal: false)
 
         default:
             return DispatchResult(handled: false, isTerminal: false)
         }
+    }
+
+    // MARK: - Risk gating
+
+    /// Maps an irreversible key combo to a human description, or nil when it's
+    /// safe. Modifier order is ignored; the last token is the key.
+    private static func riskyKeyComboDescription(_ combo: String) -> String? {
+        let tokens = combo
+            .lowercased()
+            .split(whereSeparator: { $0 == "+" || $0 == "-" || $0 == " " })
+            .map(String.init)
+        guard let key = tokens.last else { return nil }
+        let mods = Set(tokens.dropLast())
+        let cmd = mods.contains("cmd") || mods.contains("command")
+        let shift = mods.contains("shift")
+        let option = mods.contains("option") || mods.contains("opt") || mods.contains("alt")
+
+        if cmd && shift && key == "q" { return "log out of macOS (⌘⇧Q)" }
+        if cmd && key == "q" { return "quit the current app (⌘Q)" }
+        if cmd && option && (key == "esc" || key == "escape") { return "force-quit an app (⌘⌥⎋)" }
+        if cmd && shift && key == "w" { return "close all windows (⌘⇧W)" }
+        if cmd && key == "w" { return "close the current window or tab (⌘W)" }
+        if cmd && (key == "delete" || key == "backspace") { return "delete the selection (⌘⌫)" }
+        if cmd && (key == "return" || key == "enter") { return "send or submit (⌘↩)" }
+        return nil
+    }
+
+    private static let riskyClickKeywords = [
+        "delete", "remove", "trash", "discard", "send", "unsend", "quit",
+        "sign out", "log out", "logout", "unsubscribe", "deactivate",
+        "pay", "buy", "purchase", "checkout", "erase", "reset", "wipe", "format"
+    ]
+
+    /// A human description when a click label looks irreversible, else nil.
+    private static func riskyClickDescription(label: String?) -> String? {
+        guard let label else { return nil }
+        let lower = label.lowercased()
+        guard riskyClickKeywords.contains(where: { lower.contains($0) }) else { return nil }
+        return "click \"\(label)\""
     }
 
     private static let systemPrompt = """
@@ -276,6 +333,7 @@ final class BlinkBrainRouter {
     - run_background_agent for ANY work that involves writing, editing, generating, refactoring, building, debugging, or researching source code, scripts, configuration, or content. Examples that ALWAYS go to run_background_agent: "code a website", "build a python script", "make me a chrome extension", "write a SwiftUI view that…", "refactor this file", "fix the bug in…", "set up a node project", "write tests for…", "research X and write it up". NEVER open Terminal, Xcode, Cursor, VS Code, or any editor to type code yourself via type_text — that wastes the user's foreground. Hand the instruction to run_background_agent and call finish_task.
     - web_search for explicit "google X" requests.
     - forget_memory when the user explicitly asks to forget or delete something they told you before ("forget what I said about my dog", "delete my home address", "forget that"). Pass a short topic describing what to forget.
+    - remember_fact when the user explicitly asks you to remember a durable fact ("remember my …", "note that I …", "don't forget that …"). Pass a concise standalone statement. Do NOT use it for ordinary conversation — normal exchanges are already remembered automatically.
     - finish_task ALWAYS at the end of a multi-step task once everything is done. Provide a 4-10 word summary that will be spoken aloud.
 
     Example — "code me a website that tracks sleep":
@@ -430,6 +488,21 @@ final class BlinkBrainRouter {
                         "topic": ["type": "string", "description": "Short description of what to forget, e.g. 'my dog' or 'my home address'"]
                     ],
                     "required": ["topic"],
+                    "additionalProperties": false
+                ]
+            ]
+        ],
+        [
+            "type": "function",
+            "function": [
+                "name": "remember_fact",
+                "description": "Save a durable fact the user explicitly asks you to remember (\"remember my API key is in ~/.config\", \"remember I prefer metric units\"). Stored as a high-priority memory recalled in future sessions. Only for explicit 'remember …' requests, never for ordinary chit-chat.",
+                "parameters": [
+                    "type": "object",
+                    "properties": [
+                        "fact": ["type": "string", "description": "The fact to remember, as a concise standalone statement"]
+                    ],
+                    "required": ["fact"],
                     "additionalProperties": false
                 ]
             ]

@@ -92,6 +92,10 @@ final class MenuBarPanelManager: NSObject {
         button.action = #selector(statusItemClicked(_:))
         button.target = self
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+
+        // Begin polling memory-server reachability from launch so the status
+        // menu and panel banner reflect reality without the panel being open.
+        companionManager.startMemoryServerMonitorIfNeeded()
     }
 
     /// Draws the blink triangle as a menu bar icon. Uses the same shape
@@ -183,7 +187,36 @@ final class MenuBarPanelManager: NSObject {
         menu.addItem(.separator())
         menu.addItem(agentHistoryMenuItem())
 
+        if let memoryItem = memoryStatusMenuItem() {
+            menu.addItem(.separator())
+            menu.addItem(memoryItem)
+        }
+
         menu.popUp(positioning: quickItem, at: NSPoint(x: 0, y: sender.bounds.height + 2), in: sender)
+    }
+
+    /// Shows a "Memory off — Start server" item only when the user has memory
+    /// configured but the local ChromaDB server isn't answering. Selecting it
+    /// launches the server (one click).
+    private func memoryStatusMenuItem() -> NSMenuItem? {
+        guard companionManager.memoryServerExpected,
+              companionManager.memoryServerStatusKnown,
+              !companionManager.isMemoryServerReachable else { return nil }
+
+        let title = companionManager.isStartingMemoryServer
+            ? "Memory off — starting server…"
+            : "Memory off — Start server"
+        let item = NSMenuItem(title: title, action: #selector(startMemoryServerFromStatusMenu), keyEquivalent: "")
+        item.target = self
+        item.isEnabled = !companionManager.isStartingMemoryServer
+        if let icon = NSImage(systemSymbolName: "brain.head.profile", accessibilityDescription: nil) {
+            item.image = icon
+        }
+        return item
+    }
+
+    @objc private func startMemoryServerFromStatusMenu() {
+        companionManager.startMemoryServer()
     }
 
     private func agentHistoryMenuItem() -> NSMenuItem {
