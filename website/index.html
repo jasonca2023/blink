@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blink — talk to your Mac, it does the thing</title>
+  <meta name="description" content="Blink is a native macOS menu-bar AI companion. Hold a key to talk, and it reads your screen, answers in voice, and drives your apps for you." />
+
+  <meta property="og:title" content="Blink — your macOS AI companion" />
+  <meta property="og:description" content="Hold a key to talk. Blink reads your screen, answers in voice, and drives your apps for you." />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="assets/icon.png" />
+  <meta name="theme-color" content="#0a0b0d" />
+
+  <link rel="icon" type="image/png" href="assets/icon-256.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap" />
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- N5 · floating pill nav -->
+  <header class="nav" id="nav">
+    <div class="nav-pill">
+      <a class="nav-brand" href="#top">
+        <img src="assets/icon-256.png" alt="" class="nav-icon" />
+        <span>Blink</span>
+      </a>
+      <nav class="nav-links">
+        <a href="#workflow">How it works</a>
+        <a href="#capabilities">Capabilities</a>
+        <a class="nav-cta" href="#download">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- hero — left-biased statement, icon offset right -->
+    <section class="hero">
+      <div class="hero-text">
+        <p class="kicker">Native macOS · runs entirely on your Mac</p>
+        <h1 class="hero-title">Talk to your Mac.<br />It does the thing.</h1>
+        <p class="hero-sub">
+          Blink is a menu-bar AI companion. Hold a key and ask — it reads your
+          screen, replies in voice, and drives your apps for you. Click buttons,
+          open apps, run searches, fill text. No pixel guessing.
+        </p>
+        <div class="actions">
+          <a class="btn btn-primary" href="#download">Download for macOS</a>
+          <a class="btn btn-line" href="https://github.com/blink/blink" target="_blank" rel="noopener">View source</a>
+        </div>
+        <p class="hero-meta">Free &amp; open source · macOS 14.2+ · Apple Silicon &amp; Intel</p>
+      </div>
+      <div class="hero-mark" aria-hidden="true">
+        <img src="assets/icon.png" alt="" fetchpriority="high" />
+      </div>
+    </section>
+
+    <!-- Narrative Workflow — the talk → see → act loop as numbered stages -->
+    <section class="workflow" id="workflow">
+      <p class="section-lead">Three steps, then it's just there.</p>
+
+      <article class="stage">
+        <div class="stage-rule"><span class="stage-n">1.0</span><span class="stage-tag">TALK</span></div>
+        <div class="stage-body">
+          <h2>Hold to ask</h2>
+          <p>Press and hold the hotkey for voice, or double-tap for the text bar. Ask in plain language — "what is this", "click Stop Sharing", "open github.com".</p>
+        </div>
+      </article>
+
+      <article class="stage">
+        <div class="stage-rule"><span class="stage-n">2.0</span><span class="stage-tag">SEE</span></div>
+        <div class="stage-body">
+          <h2>It reads the screen</h2>
+          <p>Blink captures what you're looking at and maps the live interface through the macOS Accessibility tree — buttons, fields, menus, the works — as structured data, not pixels.</p>
+        </div>
+      </article>
+
+      <article class="stage">
+        <div class="stage-rule"><span class="stage-n">3.0</span><span class="stage-tag">ACT</span></div>
+        <div class="stage-body">
+          <h2>It acts</h2>
+          <p>Answers out loud, or clicks, types and navigates for you — across whatever app is in front of you. When a label misses, it inspects the UI and finds the right target.</p>
+        </div>
+      </article>
+    </section>
+
+    <!-- Capabilities — asymmetric grid, no icon tiles -->
+    <section class="caps" id="capabilities">
+      <h2 class="caps-head">An assistant that can see and act</h2>
+      <div class="caps-grid">
+        <article class="cap span-3">
+          <h3>Voice push-to-talk</h3>
+          <p>Hold a hotkey, ask anything, let go. Blink answers in a sentence or two and only speaks when you ask it to.</p>
+        </article>
+        <article class="cap span-3">
+          <h3>Text mode</h3>
+          <p>Double-tap to summon a floating composer at your cursor. Slash commands and <code>@</code> mentions inline, same brain as voice.</p>
+        </article>
+        <article class="cap span-4">
+          <h3>Agentic UI control</h3>
+          <p>Finds buttons, menus, links and checkboxes through the Accessibility tree and invokes them by label. When a label misses, it calls <code>inspect_ui</code> to see what's really on screen, then clicks the right thing.</p>
+        </article>
+        <article class="cap span-2">
+          <h3>Sees your screen</h3>
+          <p>ScreenCaptureKit feeds the model on demand, against your actual windows.</p>
+        </article>
+        <article class="cap span-3">
+          <h3>App-aware knowledge</h3>
+          <p>Built-in answers for Onshape, Blender, Photoshop, Illustrator and Figma — "how do I extrude this" uses the bundled knowledge base.</p>
+        </article>
+        <article class="cap span-3">
+          <h3>Retrieval-augmented answers</h3>
+          <p>RAG grounds replies in real sources: it semantically searches the bundled knowledge base for the passages that match your question, then answers from those — not from a guess.</p>
+        </article>
+        <article class="cap span-2">
+          <h3>Cross-session memory</h3>
+          <p>With a local vector store, Blink recalls relevant past conversations, scoped to the app you're in.</p>
+        </article>
+        <article class="cap span-4">
+          <h3>Agent Mode</h3>
+          <p>Hand off longer jobs — research, refactors, file work — and Blink runs them in the background through a bundled Codex runtime, without taking over your screen.</p>
+        </article>
+        <article class="cap span-6 cap-wide">
+          <h3>Local-only by design</h3>
+          <p>API keys live on your Mac in <code>~/.config/blink</code>. Nothing routes through a hosted proxy, and your screen never leaves your control. A local control bridge lets other trusted apps drive the overlay.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- Get Blink -->
+    <section class="get" id="download">
+      <div class="get-head">
+        <h2>Get Blink</h2>
+        <p>Download the disk image, drag Blink to Applications, and grant the permissions it asks for on first launch. After that it lives in your menu bar and starts automatically at login.</p>
+        <div class="actions">
+          <a class="btn btn-primary big" href="downloads/Blink.dmg" download id="dmg-link">
+            <span id="dmg-label">Download Blink.dmg</span>
+          </a>
+        </div>
+        <p class="get-status" id="dmg-status">Checking availability…</p>
+      </div>
+
+      <ol class="install">
+        <li class="install-step">
+          <span class="install-n">01</span>
+          <div><h3>Open the disk image</h3><p>Double-click the downloaded <code>Blink.dmg</code> to mount it.</p></div>
+        </li>
+        <li class="install-step">
+          <span class="install-n">02</span>
+          <div><h3>Drag Blink to Applications</h3><p>Drop the Blink icon onto the Applications folder, then eject the image.</p></div>
+        </li>
+        <li class="install-step">
+          <span class="install-n">03</span>
+          <div><h3>Open it the first time</h3><p>In Applications, right-click Blink and choose Open — once, to get past Gatekeeper on an unsigned build.</p></div>
+        </li>
+        <li class="install-step">
+          <span class="install-n">04</span>
+          <div><h3>Grant permissions</h3><p>Approve Accessibility, Screen Recording and Microphone in System Settings → Privacy &amp; Security.</p></div>
+        </li>
+      </ol>
+
+      <div class="reqs">
+        <div class="req"><h4>macOS 14.2+</h4><p>Sonoma or newer. Apple Silicon and Intel.</p></div>
+        <div class="req"><h4>Your own API keys</h4><p>Anthropic for replies, ElevenLabs for voice. Stored locally, never synced.</p></div>
+        <div class="req"><h4>A few permissions</h4><p>Accessibility, Screen Recording, Microphone — granted once.</p></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Ft5 · statement close -->
+  <footer class="footer">
+    <p class="footer-statement">The instrument runs on your Mac. Your screen, your keys, your machine — nothing ships through a proxy.</p>
+    <div class="footer-line">
+      <a class="footer-brand" href="#top"><img src="assets/icon-256.png" alt="" class="nav-icon" /><span>Blink</span></a>
+      <a href="https://github.com/blink/blink" target="_blank" rel="noopener">GitHub</a>
+      <span class="footer-copy">© <span id="year"></span> Blink</span>
+    </div>
+  </footer>
+
+  <script src="main.js"></script>
+</body>
+</html>

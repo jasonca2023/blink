@@ -1,0 +1,58 @@
+/* Hallmark · tokens.css — Blink · genre: atmospheric · theme: Midnight (brand-blue accent)
+ * Portable design tokens. Every colour/font/space/motion value in styles.css
+ * references a name from this file — no inline raw values.
+ */
+:root {
+  /* paper — dark canvas, blue-tinted (never pure black); elevation by lightness */
+  --color-paper:   oklch(14% 0.012 255);
+  --color-paper-2: oklch(18% 0.014 255);
+  --color-paper-3: oklch(22% 0.016 255);
+
+  /* ink — near-white tinted (never pure white) */
+  --color-ink:   oklch(96% 0.004 255);
+  --color-ink-2: oklch(74% 0.012 255);
+  --color-ink-3: oklch(56% 0.014 255);
+
+  --color-rule:  oklch(28% 0.014 255);
+  --color-pill:  oklch(18% 0.014 255 / 0.72); /* floating-nav backdrop */
+
+  /* accent — Blink blue, single hue, used on ≤5% of any viewport */
+  --color-accent:     oklch(70% 0.142 248);
+  --color-accent-2:   oklch(82% 0.095 248);
+  --color-accent-ink: oklch(20% 0.03 255);
+  --color-focus:      oklch(82% 0.12 248);
+
+  /* the single blue glow behind the hero logo — core/mid mix strengths */
+  --glow-core: 52%;
+  --glow-mid:  17%;
+
+  /* type */
+  --font-display: "Space Grotesk", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-body:    "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono:    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* 4-point spacing scale */
+  --space-3xs: 0.25rem; --space-2xs: 0.5rem;  --space-xs: 0.75rem;
+  --space-sm:  1rem;    --space-md:  1.5rem;   --space-lg: 2rem;
+  --space-xl:  3rem;    --space-2xl: 4.5rem;   --space-3xl: 7rem;
+
+  /* type scale */
+  --text-sm:  0.875rem; --text-md: 1.0625rem; --text-lg: 1.3rem;
+  --text-xl:  1.75rem;  --text-2xl: 2.25rem;
+  --text-display-s: clamp(2.4rem, 4vw + 1rem, 3.6rem);
+  --text-display:   clamp(3rem, 6vw + 1rem, 5.5rem);
+  --text-numeral:   clamp(2.2rem, 5vw, 4rem);
+
+  /* motion */
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-short: 220ms;
+  --dur-med:   420ms;
+
+  /* radii */
+  --radius-card: 16px;
+  --radius-pill: 999px;
+
+  /* z-scale (named, no magic 9999) */
+  --z-base: 1; --z-raised: 10; --z-nav: 100; --z-overlay: 1000;
+}

@@ -1,0 +1,5 @@
+# the app binary stays local — never distribute it via git
+downloads/*.dmg
+
+# Vercel project link (machine-local)
+.vercel

@@ -36,6 +36,13 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDel
     private var sparkleUpdaterController: SPUStandardUpdaterController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Single-instance guard: if another Blink is already running, hand it
+        // focus and quit before we install the event tap, menu bar item, or
+        // login-item registration — two instances would fight over all three.
+        if activateExistingInstanceAndQuitIfDuplicate() {
+            return
+        }
+
         print("Blink: Starting...")
         print("Blink: Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")")
 
@@ -82,6 +89,23 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDel
 
     func application(_ application: NSApplication, open urls: [URL]) {
         urls.forEach { companionManager.handleWidgetDeepLink($0) }
+    }
+
+    /// Enforces a single running copy of Blink. Matches other instances by
+    /// bundle identifier, so a build launched from Xcode/DerivedData and a copy
+    /// in /Applications still count as one. When a duplicate is found, this
+    /// process activates the existing instance and exits immediately, before any
+    /// global setup runs. Returns true when this process is the duplicate.
+    private func activateExistingInstanceAndQuitIfDuplicate() -> Bool {
+        let bundleID = Bundle.main.bundleIdentifier ?? "com.blink.blink"
+        let others = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0 != .current && !$0.isTerminated }
+        guard let existing = others.first else { return false }
+
+        print("Blink: Another instance is already running — activating it and quitting.")
+        existing.activate()
+        exit(0)
     }
 
     /// Registers the app as a login item so it launches automatically on
