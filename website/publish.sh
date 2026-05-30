@@ -46,6 +46,10 @@ GA="$(find "$HOME/Library/Developer/Xcode/DerivedData"/Blink-* -path '*sparkle/S
 [[ -x "$GA" ]] || die "generate_appcast not found. Build Blink once in Xcode so SPM fetches Sparkle's tools."
 
 say "Signing appcast with your Sparkle key (first run shows a one-time keychain prompt)…"
+# We ship a single rolling Blink.dmg (always the latest), so the feed should hold
+# exactly one entry. Regenerate clean — otherwise generate_appcast preserves older
+# items that still point at the reused dmg URL, which now serves a different build.
+rm -f "$OUT_DIR/appcast.xml"
 "$GA" --download-url-prefix "$SITE_BASE/downloads/" "$OUT_DIR"
 [[ -f "$OUT_DIR/appcast.xml" ]] || die "generate_appcast did not produce appcast.xml."
 
