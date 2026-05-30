@@ -1,8 +1,6 @@
-# The compiled Blink app (DMG) stays local — never publish the app binary.
-downloads/
-
 # Local dev + packaging tooling, not part of the public site.
 build-dmg.sh
 serve.sh
 README.md
 .hallmark/
+downloads/README.md
