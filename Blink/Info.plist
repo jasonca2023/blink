@@ -39,9 +39,9 @@
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/blink/blink/main/appcast.xml</string>
+	<string>https://website-jason-guo.vercel.app/downloads/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string>fXYcC2zX+zTEH0DVS8io8agfHtphoB9/o6J33T9FLdk=</string>
+	<string>sA7Pp6GxFmtjJQYv9kh58LuTdoIlBoBoqocxK4DYliw=</string>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 	<key>VoiceTranscriptionProvider</key>
