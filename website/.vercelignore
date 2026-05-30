@@ -1,6 +1,8 @@
 # Local dev + packaging tooling, not part of the public site.
 build-dmg.sh
+release-dmg.sh
 serve.sh
 README.md
+RELEASE.md
 .hallmark/
 downloads/README.md
