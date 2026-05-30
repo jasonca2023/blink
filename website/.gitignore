@@ -1,5 +1,9 @@
 # the app binary stays local — never distribute it via git
 downloads/*.dmg
 
+# generated each publish, served from Vercel (not git)
+downloads/appcast.xml
+downloads/.last-version
+
 # Vercel project link (machine-local)
 .vercel

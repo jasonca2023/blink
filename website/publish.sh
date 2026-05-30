@@ -49,8 +49,16 @@ say "Signing appcast with your Sparkle key (first run shows a one-time keychain 
 "$GA" --download-url-prefix "$SITE_BASE/downloads/" "$OUT_DIR"
 [[ -f "$OUT_DIR/appcast.xml" ]] || die "generate_appcast did not produce appcast.xml."
 
+# the update is worthless to installed apps unless it carries an EdDSA signature
+if ! grep -q 'sparkle:edSignature' "$OUT_DIR/appcast.xml"; then
+  warn "appcast.xml has NO EdDSA signature — installed apps will REJECT this update."
+  warn "Cause: the keychain prompt was denied, or the built app's SUPublicEDKey does"
+  warn "not match your Sparkle signing key (e.g. an old build). Approve the keychain"
+  warn "dialog (Always Allow) and rebuild Blink with the current key, then re-run."
+fi
+
 # version sanity — Sparkle only offers builds with a HIGHER CFBundleVersion
-VER="$(grep -o 'sparkle:version="[0-9][0-9]*"' "$OUT_DIR/appcast.xml" | head -1 | grep -o '[0-9][0-9]*' || echo '?')"
+VER="$(grep -oE '<sparkle:version>[0-9]+</sparkle:version>' "$OUT_DIR/appcast.xml" | head -1 | grep -oE '[0-9]+' || echo '?')"
 LAST_FILE="$OUT_DIR/.last-version"
 LAST="$(cat "$LAST_FILE" 2>/dev/null || echo '')"
 if [[ -n "$LAST" && "$VER" == "$LAST" ]]; then
