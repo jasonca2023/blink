@@ -2,16 +2,20 @@
 //  ChromaDBClient.swift
 //  Blink
 //
-//  Local ChromaDB HTTP client. Stores/retrieves conversation memory.
-//  ChromaDB's REST API does NOT embed text server-side — it requires
-//  pre-computed vectors (`embeddings` on add, `query_embeddings` on query).
-//  So we embed client-side: OpenAI text-embedding-3-small when an OpenAI key
-//  is configured, otherwise the HuggingFace router. The chosen model must stay
-//  consistent for a collection — switching providers changes the vector
-//  dimension and requires wiping ~/blink-memory.
+//  On-device conversation memory. Persists past exchanges as embedding vectors
+//  in a local file and recalls them by cosine similarity — entirely in-process,
+//  with no server to install or run. Every Blink user gets working, persistent
+//  memory once an embedding key (OpenAI or Hugging Face) is configured, and the
+//  data never leaves their Mac.
 //
-//  Requires a running ChromaDB server:
-//    chroma run --path ~/blink-memory --port 8001
+//  ChromaDB used to back this over HTTP (localhost:8001), which required the
+//  user to start a `chroma` server by hand. The public API here is unchanged so
+//  callers didn't have to change; only the storage moved from that server to a
+//  local file (~/Library/Application Support/Blink/conversation-memory.json).
+//  Embeddings are still computed client-side: OpenAI text-embedding-3-small when
+//  an OpenAI key is set, otherwise the HuggingFace router. The chosen model must
+//  stay consistent for the store — switching providers changes the vector
+//  dimension; mismatched vectors simply stop matching until the store is reset.
 //
 
 import Foundation
@@ -19,25 +23,7 @@ import Foundation
 actor ChromaDBClient {
     static let shared = ChromaDBClient()
 
-    private let serverURL: URL
-    private let tenant = "default_tenant"
-    private let database = "default_database"
-    private let collectionName = "blink_memory"
-    private var collectionID: String?
-
-    private var apiURL: URL { serverURL.appendingPathComponent("api/v2") }
-
-    init(port: Int = 8001) {
-        serverURL = URL(string: "http://localhost:\(port)")!
-    }
-
-    func isReachable() async -> Bool {
-        let url = apiURL.appendingPathComponent("heartbeat")
-        guard let (_, resp) = try? await URLSession.shared.data(from: url),
-              let http = resp as? HTTPURLResponse
-        else { return false }
-        return http.statusCode == 200
-    }
+    init() {}
 
     private static let dateFormatter = ISO8601DateFormatter()
 
@@ -68,53 +54,85 @@ actor ChromaDBClient {
     private static let pruneCheckInterval = 20
     private var storeCountSinceLaunch = 0
 
-    // The embedding model the live collection was built with, read from its
-    // metadata. Used to detect a provider switch — which changes the vector
-    // dimension and silently breaks add/query until the store is reset.
-    private var storedEmbeddingModel: String?
-
     // Max cosine distance for a memory to be deleted by a "forget X" request.
     // Stricter than recall (maxRelevantDistance) because deletion is
     // destructive: only remove clearly-matching memories.
     private static let forgetMatchDistance = 0.6
 
+    // MARK: - Local store
+
+    /// One persisted exchange. Embeddings are stored as Float to keep the file
+    /// compact; cosine math promotes back to Double.
+    private struct MemoryRecord: Codable {
+        let id: String
+        var embedding: [Float]
+        var transcript: String
+        var response: String
+        var appBundleID: String?
+        var appName: String?
+        var pinned: Bool
+        var timestamp: String
+    }
+
+    private struct StoreFile: Codable {
+        var embeddingModel: String?
+        var records: [MemoryRecord]
+    }
+
+    private var records: [MemoryRecord] = []
+    // The embedding model the stored vectors were built with. Used to detect a
+    // provider switch — which changes the vector dimension so old vectors stop
+    // matching — and surface the "reset memory" prompt in Settings.
+    private var storedEmbeddingModel: String?
+    private var loaded = false
+
+    private var storeFileURL: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support", isDirectory: true)
+        let dir = base.appendingPathComponent("Blink", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("conversation-memory.json", isDirectory: false)
+    }
+
+    private func loadIfNeeded() {
+        if loaded { return }
+        loaded = true
+        guard let data = try? Data(contentsOf: storeFileURL),
+              let file = try? JSONDecoder().decode(StoreFile.self, from: data)
+        else { return }
+        records = file.records
+        storedEmbeddingModel = file.embeddingModel
+    }
+
+    private func persist() {
+        let file = StoreFile(embeddingModel: storedEmbeddingModel, records: records)
+        guard let data = try? JSONEncoder().encode(file) else { return }
+        try? data.write(to: storeFileURL, options: .atomic)
+    }
+
+    /// The local store is always available — there is no server to be offline.
+    /// Kept so the Settings/menu-bar reachability indicators read "on".
+    func isReachable() async -> Bool { true }
+
     /// Persist a conversation turn, tagged with the app that was focused when it
     /// happened. Skips storage if a semantically identical exchange already
     /// exists in the same app (cosine distance < 0.1). Fire-and-forget.
     func store(transcript: String, response: String, appBundleID: String? = nil, appName: String? = nil) async {
-        print("🧠 ChromaDB: store called for: \(transcript.prefix(40))")
         do {
             // Embed the full exchange once; reuse it for the dedup check and the add.
             let document = "User: \(transcript)\nBlink: \(response)"
             let embedding = try await embed(document)
 
-            if let nearest = try await nearestDistance(embedding: embedding, appBundleID: appBundleID),
-               nearest < 0.1 {
-                print("🧠 ChromaDB: skipping duplicate (distance \(String(format: "%.3f", nearest)))")
+            if let nearest = nearestDistance(embedding: embedding, appBundleID: appBundleID), nearest < 0.1 {
                 return
             }
 
-            var metadata: [String: String] = [
-                "transcript": transcript,
-                "response": response,
-                "timestamp": Self.dateFormatter.string(from: Date())
-            ]
-            if let appBundleID, !appBundleID.isEmpty { metadata["app_bundle_id"] = appBundleID }
-            if let appName, !appName.isEmpty { metadata["app_name"] = appName }
-
-            let (data, http) = try await postToCollection(pathSuffix: "add", body: [
-                "ids": [UUID().uuidString],
-                "embeddings": [embedding],
-                "documents": [document],
-                "metadatas": [metadata]
-            ])
-            if !(200...299).contains(http.statusCode) {
-                let body = String(data: data, encoding: .utf8) ?? ""
-                throw ChromaError.storeFailed("HTTP \(http.statusCode): \(body.prefix(200))")
-            }
-            await pruneIfNeeded()
+            appendRecord(embedding: embedding, transcript: transcript, response: response,
+                         appBundleID: appBundleID, appName: appName, pinned: false)
+            pruneIfNeeded()
+            persist()
         } catch {
-            print("⚠️ ChromaDB store error: \(error)")
+            print("memory store error: \(error)")
         }
     }
 
@@ -125,148 +143,104 @@ actor ChromaDBClient {
     func storePinned(fact: String, appBundleID: String? = nil, appName: String? = nil) async {
         let trimmed = fact.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        print("🧠 ChromaDB: storePinned: \(trimmed.prefix(40))")
         do {
             let embedding = try await embed(trimmed)
-            var metadata: [String: String] = [
-                "transcript": trimmed,
-                "response": "",
-                "pinned": "true",
-                "timestamp": Self.dateFormatter.string(from: Date())
-            ]
-            if let appBundleID, !appBundleID.isEmpty { metadata["app_bundle_id"] = appBundleID }
-            if let appName, !appName.isEmpty { metadata["app_name"] = appName }
-
-            let (data, http) = try await postToCollection(pathSuffix: "add", body: [
-                "ids": [UUID().uuidString],
-                "embeddings": [embedding],
-                "documents": [trimmed],
-                "metadatas": [metadata]
-            ])
-            if !(200...299).contains(http.statusCode) {
-                let body = String(data: data, encoding: .utf8) ?? ""
-                throw ChromaError.storeFailed("HTTP \(http.statusCode): \(body.prefix(200))")
-            }
+            appendRecord(embedding: embedding, transcript: trimmed, response: "",
+                         appBundleID: appBundleID, appName: appName, pinned: true)
+            persist()
         } catch {
-            print("⚠️ ChromaDB storePinned error: \(error)")
+            print("memory storePinned error: \(error)")
         }
     }
 
     /// Semantic search for past exchanges relevant to the current transcript.
     /// When `appBundleID` is supplied, memories recorded in that same app are
-    /// promoted in the ranking. Returns empty if ChromaDB is unreachable or has
-    /// no stored data yet.
+    /// promoted in the ranking. Returns empty if memory is empty or there's no
+    /// embedding provider configured.
     func queryRelevant(
         for transcript: String,
         appBundleID: String? = nil,
         maxResults: Int = 3
     ) async -> [(transcript: String, response: String)] {
         do {
-            // With an app in focus, pull a wider candidate set so same-app
-            // memories can be promoted without dropping strong cross-app matches.
-            let candidateCount = appBundleID == nil ? maxResults : maxResults + 3
             let queryEmbedding = try await embed(transcript)
-            let (data, http) = try await postToCollection(pathSuffix: "query", body: [
-                "query_embeddings": [queryEmbedding],
-                "n_results": candidateCount,
-                "include": ["metadatas", "distances"]
-            ])
-            guard (200...299).contains(http.statusCode) else { return [] }
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let metaOuter = json["metadatas"] as? [[[String: Any]]],
-                  let metaGroup = metaOuter.first
-            else { return [] }
-            let distGroup = (json["distances"] as? [[Double]])?.first ?? []
+            loadIfNeeded()
+            guard !records.isEmpty else { return [] }
 
             // Lower score = more relevant. Same-app memories get a distance bonus.
             var scored: [(transcript: String, response: String, score: Double)] = []
-            for (idx, meta) in metaGroup.enumerated() {
-                guard let t = meta["transcript"] as? String,
-                      let r = meta["response"] as? String
-                else { continue }
-                let isPinned = (meta["pinned"] as? String) == "true"
-                let distance: Double? = idx < distGroup.count ? distGroup[idx] : nil
+            for record in records {
+                let distance = cosineDistance(queryEmbedding, record.embedding)
                 // Drop clearly-irrelevant matches so unrelated queries inject
                 // nothing. Pinned facts get extra slack and a stronger boost.
-                let threshold = isPinned ? Self.maxRelevantDistance + Self.pinnedDistanceSlack : Self.maxRelevantDistance
-                if let distance, distance > threshold { continue }
-                var score = distance ?? Double(idx)
-                if isPinned {
+                let threshold = record.pinned ? Self.maxRelevantDistance + Self.pinnedDistanceSlack : Self.maxRelevantDistance
+                if distance > threshold { continue }
+                var score = distance
+                if record.pinned {
                     score -= Self.pinnedBoost
-                } else if let appBundleID, meta["app_bundle_id"] as? String == appBundleID {
+                } else if let appBundleID, record.appBundleID == appBundleID {
                     score -= Self.sameAppBoost
                 }
-                scored.append((transcript: t, response: r, score: score))
+                scored.append((transcript: record.transcript, response: record.response, score: score))
             }
             return scored
                 .sorted { $0.score < $1.score }
                 .prefix(maxResults)
                 .map { (transcript: $0.transcript, response: $0.response) }
         } catch {
-            print("⚠️ ChromaDB query error: \(error)")
+            print("memory query error: \(error)")
             return []
         }
     }
 
     // MARK: - Management
 
-    /// Snapshot for the Settings memory panel: server reachability, stored
-    /// count, the model new embeddings would use, and the model the collection
-    /// was actually built with (so the UI can warn on a provider switch).
+    /// Snapshot for the Settings memory panel: stored count, the model new
+    /// embeddings would use, and the model the store was actually built with (so
+    /// the UI can warn on a provider switch). Always "reachable" — local.
     func status() async -> ChromaMemoryStatus {
-        let current = currentEmbeddingModel()
-        guard await isReachable() else {
-            return ChromaMemoryStatus(reachable: false, count: 0, currentModel: current, storedModel: nil)
-        }
-        let count = (try? await collectionCount()) ?? 0
-        return ChromaMemoryStatus(reachable: true, count: count, currentModel: current, storedModel: storedEmbeddingModel)
+        loadIfNeeded()
+        return ChromaMemoryStatus(
+            reachable: true,
+            count: records.count,
+            currentModel: currentEmbeddingModel(),
+            storedModel: storedEmbeddingModel
+        )
     }
 
     /// Every stored exchange, newest first, for the memory inspector.
     func allMemories(limit: Int = 500) async -> [ChromaMemoryRecord] {
-        do {
-            let (data, http) = try await postToCollection(pathSuffix: "get", body: [
-                "include": ["metadatas"],
-                "limit": limit
-            ])
-            guard (200...299).contains(http.statusCode),
-                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let ids = json["ids"] as? [String]
-            else { return [] }
-            let metas = (json["metadatas"] as? [[String: Any]]) ?? []
-            let records = ids.enumerated().map { (idx, id) -> ChromaMemoryRecord in
-                let meta = idx < metas.count ? metas[idx] : [:]
-                return ChromaMemoryRecord(
-                    id: id,
-                    transcript: meta["transcript"] as? String ?? "",
-                    response: meta["response"] as? String ?? "",
-                    appName: meta["app_name"] as? String,
-                    timestamp: meta["timestamp"] as? String
+        loadIfNeeded()
+        return records
+            .sorted { ($0.timestamp) > ($1.timestamp) }
+            .prefix(limit)
+            .map { record in
+                ChromaMemoryRecord(
+                    id: record.id,
+                    transcript: record.transcript,
+                    response: record.response,
+                    appName: record.appName,
+                    timestamp: record.timestamp
                 )
             }
-            return records.sorted { ($0.timestamp ?? "") > ($1.timestamp ?? "") }
-        } catch {
-            print("⚠️ ChromaDB allMemories error: \(error)")
-            return []
-        }
     }
 
     /// Delete a single stored exchange by id.
     func deleteMemory(id: String) async {
-        _ = try? await postToCollection(pathSuffix: "delete", body: ["ids": [id]])
+        loadIfNeeded()
+        let before = records.count
+        records.removeAll { $0.id == id }
+        if records.count != before { persist() }
     }
 
-    /// Drop the whole collection. Used by "Forget all" and by the provider-
-    /// switch reset (deleting the collection also clears the old vector
-    /// dimension). It is recreated lazily — with the current model's tag — on
-    /// the next store or query.
+    /// Drop the whole store. Used by "Forget all" and by the provider-switch
+    /// reset (which also clears the old vector dimension). The model tag is
+    /// cleared too, so the next store re-tags it with the current model.
     func clearAllMemories() async {
-        let url = apiURL.appendingPathComponent("tenants/\(tenant)/databases/\(database)/collections/\(collectionName)")
-        var req = URLRequest(url: url)
-        req.httpMethod = "DELETE"
-        _ = try? await URLSession.shared.data(for: req)
-        collectionID = nil
+        loadIfNeeded()
+        records.removeAll()
         storedEmbeddingModel = nil
+        persist()
     }
 
     /// Semantic "forget": delete stored exchanges that clearly match a topic.
@@ -277,31 +251,110 @@ actor ChromaDBClient {
         guard !trimmed.isEmpty else { return 0 }
         do {
             let queryEmbedding = try await embed(trimmed)
-            let (data, http) = try await postToCollection(pathSuffix: "query", body: [
-                "query_embeddings": [queryEmbedding],
-                "n_results": maxCandidates,
-                "include": ["distances"]
-            ])
-            guard (200...299).contains(http.statusCode),
-                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let ids = (json["ids"] as? [[String]])?.first
-            else { return 0 }
-            let distances = (json["distances"] as? [[Double]])?.first ?? []
-            var toDelete: [String] = []
-            for (idx, id) in ids.enumerated() {
-                let distance = idx < distances.count ? distances[idx] : Double.greatestFiniteMagnitude
-                if distance <= Self.forgetMatchDistance { toDelete.append(id) }
-            }
-            guard !toDelete.isEmpty else { return 0 }
-            _ = try await postToCollection(pathSuffix: "delete", body: ["ids": toDelete])
-            return toDelete.count
+            loadIfNeeded()
+            guard !records.isEmpty else { return 0 }
+            let matchingIDs = Set(
+                records
+                    .map { (id: $0.id, distance: cosineDistance(queryEmbedding, $0.embedding)) }
+                    .filter { $0.distance <= Self.forgetMatchDistance }
+                    .sorted { $0.distance < $1.distance }
+                    .prefix(maxCandidates)
+                    .map { $0.id }
+            )
+            guard !matchingIDs.isEmpty else { return 0 }
+            records.removeAll { matchingIDs.contains($0.id) }
+            persist()
+            return matchingIDs.count
         } catch {
-            print("⚠️ ChromaDB forget error: \(error)")
+            print("memory forget error: \(error)")
             return 0
         }
     }
 
     // MARK: - Private
+
+    private func appendRecord(
+        embedding: [Double],
+        transcript: String,
+        response: String,
+        appBundleID: String?,
+        appName: String?,
+        pinned: Bool
+    ) {
+        loadIfNeeded()
+        if storedEmbeddingModel == nil { storedEmbeddingModel = currentEmbeddingModel() }
+        let record = MemoryRecord(
+            id: UUID().uuidString,
+            embedding: embedding.map { Float($0) },
+            transcript: transcript,
+            response: response,
+            appBundleID: (appBundleID?.isEmpty == false) ? appBundleID : nil,
+            appName: (appName?.isEmpty == false) ? appName : nil,
+            pinned: pinned,
+            timestamp: Self.dateFormatter.string(from: Date())
+        )
+        records.append(record)
+    }
+
+    // Returns the cosine distance to the closest stored document, or nil if
+    // there's nothing to compare against (in which case the caller should always
+    // store). When `appBundleID` is supplied, dedup is scoped to that app so an
+    // identical phrase said in a different app is still kept as its own memory.
+    private func nearestDistance(embedding: [Double], appBundleID: String?) -> Double? {
+        loadIfNeeded()
+        let pool: [MemoryRecord]
+        if let appBundleID, !appBundleID.isEmpty {
+            pool = records.filter { $0.appBundleID == appBundleID }
+        } else {
+            pool = records
+        }
+        guard !pool.isEmpty else { return nil }
+        var best = Double.greatestFiniteMagnitude
+        for record in pool {
+            let distance = cosineDistance(embedding, record.embedding)
+            if distance < best { best = distance }
+        }
+        return best == Double.greatestFiniteMagnitude ? nil : best
+    }
+
+    // Trims the store back to maxStoredMemories by deleting the oldest
+    // exchanges. Throttled so it isn't a full scan on every write. Pinned facts
+    // are never pruned — they're deliberately remembered.
+    private func pruneIfNeeded() {
+        storeCountSinceLaunch += 1
+        guard storeCountSinceLaunch % Self.pruneCheckInterval == 1 else { return }
+        guard records.count > Self.maxStoredMemories else { return }
+        let overflow = records.count - Self.maxStoredMemories
+        let oldest = Set(
+            records
+                .filter { !$0.pinned }
+                .sorted { $0.timestamp < $1.timestamp }
+                .prefix(overflow)
+                .map { $0.id }
+        )
+        guard !oldest.isEmpty else { return }
+        records.removeAll { oldest.contains($0.id) }
+    }
+
+    // ChromaDB's "cosine" space returns distance = 1 - cosine_similarity, in
+    // [0, 2]. We compute the same so the tuned thresholds above carry over
+    // unchanged. Vectors of differing dimension (a provider switch left old
+    // ones behind) are treated as infinitely far so they simply never match.
+    private func cosineDistance(_ a: [Double], _ b: [Float]) -> Double {
+        guard !a.isEmpty, a.count == b.count else { return .greatestFiniteMagnitude }
+        var dot = 0.0, normA = 0.0, normB = 0.0
+        for i in a.indices {
+            let x = a[i]
+            let y = Double(b[i])
+            dot += x * y
+            normA += x * x
+            normB += y * y
+        }
+        guard normA > 0, normB > 0 else { return .greatestFiniteMagnitude }
+        return 1.0 - dot / (normA.squareRoot() * normB.squareRoot())
+    }
+
+    // MARK: - Embedding
 
     // The model embed() would use right now, mirroring its provider preference
     // (OpenAI when keyed, else HuggingFace). nil when neither key is present.
@@ -315,141 +368,9 @@ actor ChromaDBClient {
         return nil
     }
 
-    // Stored-document count. The /count endpoint returns a bare integer.
-    private func collectionCount() async throws -> Int {
-        let colID = try await ensureCollection()
-        let url = apiURL.appendingPathComponent("tenants/\(tenant)/databases/\(database)/collections/\(colID)/count")
-        let (data, resp) = try await URLSession.shared.data(from: url)
-        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return 0 }
-        if let n = try? JSONSerialization.jsonObject(with: data) as? Int { return n }
-        if let s = String(data: data, encoding: .utf8),
-           let n = Int(s.trimmingCharacters(in: .whitespacesAndNewlines)) { return n }
-        return 0
-    }
-
-    // Trims the store back to maxStoredMemories by deleting the oldest
-    // exchanges. Throttled so it isn't a full scan on every write.
-    private func pruneIfNeeded() async {
-        storeCountSinceLaunch += 1
-        guard storeCountSinceLaunch % Self.pruneCheckInterval == 1 else { return }
-        guard let count = try? await collectionCount(), count > Self.maxStoredMemories else { return }
-        guard let (data, http) = try? await postToCollection(pathSuffix: "get", body: ["include": ["metadatas"]]),
-              (200...299).contains(http.statusCode),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let ids = json["ids"] as? [String]
-        else { return }
-        let metas = (json["metadatas"] as? [[String: Any]]) ?? []
-        // Never prune pinned facts — they're deliberately remembered.
-        let prunable = ids.enumerated().compactMap { (idx, id) -> (id: String, timestamp: String)? in
-            let meta = idx < metas.count ? metas[idx] : [:]
-            if (meta["pinned"] as? String) == "true" { return nil }
-            return (id: id, timestamp: meta["timestamp"] as? String ?? "")
-        }
-        let overflow = count - Self.maxStoredMemories
-        let oldest = prunable.sorted { $0.timestamp < $1.timestamp }.prefix(overflow).map { $0.id }
-        guard !oldest.isEmpty else { return }
-        _ = try? await postToCollection(pathSuffix: "delete", body: ["ids": oldest])
-    }
-
-    // Returns the cosine distance to the closest stored document, or nil if the
-    // collection is empty (in which case the caller should always store). When
-    // `appBundleID` is supplied, dedup is scoped to that app so an identical
-    // phrase said in a different app is still kept as its own memory.
-    private func nearestDistance(embedding: [Double], appBundleID: String?) async throws -> Double? {
-        var body: [String: Any] = [
-            "query_embeddings": [embedding],
-            "n_results": 1,
-            "include": ["distances"]
-        ]
-        if let appBundleID, !appBundleID.isEmpty {
-            body["where"] = ["app_bundle_id": appBundleID]
-        }
-        let (data, http) = try await postToCollection(pathSuffix: "query", body: body)
-        guard (200...299).contains(http.statusCode) else { return nil }
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let outer = json["distances"] as? [[Double]],
-              let first = outer.first?.first
-        else { return nil }
-        return first
-    }
-
-    private func ensureCollection() async throws -> String {
-        if let id = collectionID { return id }
-
-        let base = apiURL.appendingPathComponent("tenants/\(tenant)/databases/\(database)/collections")
-
-        // Try to fetch existing collection first.
-        let getURL = base.appendingPathComponent(collectionName)
-        if let (data, resp) = try? await URLSession.shared.data(from: getURL),
-           let http = resp as? HTTPURLResponse, http.statusCode == 200,
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let id = json["id"] as? String {
-            storedEmbeddingModel = (json["metadata"] as? [String: Any])?["embedding_model"] as? String
-            collectionID = id
-            return id
-        }
-
-        // Create it. get_or_create makes this idempotent: if two calls race
-        // here before collectionID is cached (e.g. a query and a store on a
-        // fresh ~/blink-memory), both get the same collection back instead of
-        // one winning and the other throwing on a 409 "already exists". Tag the
-        // collection with the embedding model that produced its vectors so a
-        // later provider switch (different dimension) can be detected.
-        var createMetadata: [String: Any] = ["hnsw:space": "cosine"]
-        if let model = currentEmbeddingModel() {
-            createMetadata["embedding_model"] = model
-        }
-        var req = URLRequest(url: base)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: [
-            "name": collectionName,
-            "get_or_create": true,
-            "metadata": createMetadata
-        ])
-        let (data, _) = try await URLSession.shared.data(for: req)
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let id = json["id"] as? String
-        else { throw ChromaError.invalidResponse }
-        storedEmbeddingModel = (json["metadata"] as? [String: Any])?["embedding_model"] as? String
-        collectionID = id
-        return id
-    }
-
-    // POSTs to a collection sub-endpoint ("add"/"query"), resolving the
-    // collection id via ensureCollection(). If the cached id is stale — the
-    // collection was deleted/recreated out from under us, which ChromaDB
-    // answers with 404 — the cache is cleared and the call retried once against
-    // a freshly-resolved collection.
-    private func postToCollection(pathSuffix: String, body: [String: Any]) async throws -> (Data, HTTPURLResponse) {
-        let bodyData = try JSONSerialization.data(withJSONObject: body)
-        var result = try await sendToCollection(pathSuffix: pathSuffix, bodyData: bodyData)
-        if result.1.statusCode == 404 {
-            collectionID = nil
-            result = try await sendToCollection(pathSuffix: pathSuffix, bodyData: bodyData)
-        }
-        return result
-    }
-
-    private func sendToCollection(pathSuffix: String, bodyData: Data) async throws -> (Data, HTTPURLResponse) {
-        let colID = try await ensureCollection()
-        let url = apiURL
-            .appendingPathComponent("tenants/\(tenant)/databases/\(database)/collections/\(colID)/\(pathSuffix)")
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = bodyData
-        let (data, response) = try await URLSession.shared.data(for: req)
-        guard let http = response as? HTTPURLResponse else { throw ChromaError.invalidResponse }
-        return (data, http)
-    }
-
-    // MARK: - Embedding
-
-    // Embeds a single string client-side. ChromaDB's REST API stores/queries
-    // vectors only, so Blink must produce them. Prefers OpenAI (reliable, and
-    // the key is already configured for the brain router); falls back to the
-    // HuggingFace router when no OpenAI key is present.
+    // Embeds a single string client-side. Prefers OpenAI (reliable, and the key
+    // is already configured for the brain router); falls back to the HuggingFace
+    // router when no OpenAI key is present.
     private func embed(_ text: String) async throws -> [Double] {
         if let openAIKey = AppBundleConfiguration.openAIAPIKey(), !openAIKey.isEmpty {
             return try await embedViaOpenAI(text, apiKey: openAIKey)
@@ -534,9 +455,9 @@ struct ChromaMemoryStatus: Sendable {
     let currentModel: String?
     let storedModel: String?
 
-    /// True when the collection was built with a different embedding model than
-    /// the one in use now — its vectors have the wrong dimension, so add/query
-    /// silently fail until the store is reset.
+    /// True when the store was built with a different embedding model than the
+    /// one in use now — its vectors have the wrong dimension, so they stop
+    /// matching until the store is reset.
     var providerMismatch: Bool {
         guard let stored = storedModel, let current = currentModel else { return false }
         return stored != current

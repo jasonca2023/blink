@@ -1320,7 +1320,7 @@ struct BlinkSettingsView: View {
     private var conversationMemoryGroup: some View {
         settingsGroup("Conversation memory") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Blink remembers what you tell it across sessions in a local ChromaDB store, scoped to the app you're in. Recall is automatic; you can review or delete what's saved here, or just say \"forget what I said about …\". Needs the server: chroma run --path ~/blink-memory --port 8001")
+                Text("Blink remembers what you tell it across sessions in a local store on your Mac, scoped to the app you're in — no setup or server needed. Recall is automatic; you can review or delete what's saved here, or just say \"forget what I said about …\". Embedding past exchanges needs an OpenAI or Hugging Face key.")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1379,11 +1379,11 @@ struct BlinkSettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Circle().fill(dotColor).frame(width: 6, height: 6)
-                    Text(reachable ? "\(count) stored exchange\(count == 1 ? "" : "s")" : "Server offline")
+                    Text(reachable ? "\(count) stored exchange\(count == 1 ? "" : "s")" : "Memory unavailable")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(DS.Colors.textPrimary)
                 }
-                Text(reachable ? (model ?? "no embedding key configured") : "Start it on :8001 to enable recall")
+                Text(reachable ? (model ?? "add an OpenAI or Hugging Face key to enable recall") : "add an OpenAI or Hugging Face key to enable recall")
                     .font(.system(size: 10))
                     .foregroundColor(DS.Colors.textTertiary)
             }

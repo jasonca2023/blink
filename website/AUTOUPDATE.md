@@ -31,10 +31,13 @@ Then just build in Xcode (Cmd+R, or Archive). On each new build the watcher
 packages the dmg, regenerates the **EdDSA-signed `appcast.xml`**, and deploys.
 Installed apps (which check daily) then download and self-install it.
 
-> **Bump the build number every release.** Sparkle only offers a version whose
-> `CFBundleVersion` is *higher* than what's installed. In Xcode bump
-> **CURRENT_PROJECT_VERSION** (target → Build Settings → Versioning) before
-> building. `publish.sh` warns if the number didn't change.
+> **The build number bumps itself.** Sparkle only offers a version whose
+> `CFBundleVersion` is *higher* than what's installed — so `publish.sh` now
+> mints the next number automatically (one higher than the last published: 7 →
+> 8 → 9 …) and stamps it onto the build it ships. You never touch
+> **CURRENT_PROJECT_VERSION** in Xcode again. The number it assigns is the max of
+> `downloads/.last-version`, the live appcast, and the built app's own version,
+> plus one, so it never repeats or regresses even across machines or dry runs.
 
 ## Two one-time facts
 
