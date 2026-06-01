@@ -12,7 +12,7 @@ Blink is a native macOS menu-bar AI companion. Hold ctrl+option for voice push-t
 - **Composite actions.** `web_search`, `new_tab`, `open_app`, `click_button`, `inspect_ui`, `type_text`, `key_press`, `scroll`, `wait_for_app` cover most everyday tasks.
 - **Sees your screen.** ScreenCaptureKit screenshots feed the model on demand, so questions like "what is this" or "where do I click" work against the actual UI.
 - **App-aware RAG.** Built-in knowledge for Onshape, Blender, Photoshop, Illustrator, and Figma — answers to "how do I extrude this" use the bundled knowledge base, not just generic web facts.
-- **Cross-session memory.** When a local ChromaDB server is running, Blink embeds each exchange and recalls relevant past conversations on later launches, scoped to the app you're focused on — so "what's my dog's name" still works tomorrow. Optional: without the server, Blink just runs without long-term memory.
+- **Cross-session memory.** Blink embeds each exchange and recalls relevant past conversations on later launches, scoped to the app you're focused on — so "what's my dog's name" still works tomorrow. Serverless and on-device: no setup, just an OpenAI or Hugging Face key for the embeddings.
 - **Agent Mode.** Send Blink longer jobs — research, refactors, file work, settings tweaks — and it runs them in the background through a bundled Codex runtime without taking the screen.
 - **Pluggable transcription.** Apple Speech (local), AssemblyAI, Deepgram, OpenAI Whisper, or Mistral Voxtral via the HuggingFace router. Picked from Settings → Voice.
 - **Apple Liquid Glass throughout.** Every panel, overlay, and card uses translucent system materials. No dark gradients.
@@ -57,19 +57,11 @@ Then open the Xcode project, set your signing team, and Cmd+R:
 open Blink.xcodeproj
 ```
 
-### Optional: cross-session memory
+### Cross-session memory
 
-Blink's long-term memory uses a local [ChromaDB](https://www.trychroma.com/) server on port `8001`. It's entirely optional — Blink runs fine without it, just without recall across launches.
+Blink's long-term memory is **serverless and on-device** — no background server to run, no extra setup. Each exchange is embedded and stored in a local vector store at `~/Library/Application Support/Blink/conversation-memory.json`, and relevant past conversations are recalled on later launches, scoped to the app you're focused on.
 
-ChromaDB does not run on Python 3.14 yet (no `onnxruntime` wheel), so install it under Python 3.11:
-
-```sh
-uv venv --python python3.11 ~/.blink-chroma-venv
-uv pip install --python ~/.blink-chroma-venv/bin/python chromadb
-~/.blink-chroma-venv/bin/chroma run --path ~/blink-memory --port 8001
-```
-
-Embeddings are computed client-side: Blink uses `OPENAI_API_KEY` (text-embedding-3-small) when set, otherwise falls back to the HuggingFace router. Leave the server running in the background while you use Blink.
+Embeddings are computed client-side: Blink uses `OPENAI_API_KEY` (`text-embedding-3-small`) when set, otherwise the HuggingFace router (`all-MiniLM-L6-v2`). So memory just needs one of those keys — there's nothing else to install. Switching embedding providers changes the vector dimension, so reset memory in Settings if you change which key you use.
 
 On first launch, grant **Microphone**, **Accessibility**, and **Screen Recording** when macOS prompts. Accessibility is required for:
 

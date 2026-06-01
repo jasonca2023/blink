@@ -1,10 +1,12 @@
 # Shipping a Blink.dmg anyone can run
 
-The DMG currently on the site is a real, fully functional Blink — but it's
-**Intel-only** and signed with a **Development** certificate, so other people's
-Macs run it under Rosetta and show a Gatekeeper warning. To publish a download
-that opens cleanly on *any* Mac, you need a **universal, Developer-ID-signed,
-notarized** build. This repo can do everything except the Xcode build itself.
+The DMG currently on the site is a real, fully functional, **universal** Blink —
+it runs natively on Apple Silicon and Intel. But it's **ad-hoc signed** (not
+notarized), so other people's Macs show a Gatekeeper warning on first launch;
+they clear it once with `xattr -dr com.apple.quarantine /Applications/Blink.app`
+(documented on the download page). To publish a download that opens cleanly on
+*any* Mac with **no warning at all**, you need a **Developer-ID-signed, notarized**
+build. This repo can do everything except the Xcode Archive itself.
 
 There are two scripts in this folder:
 
@@ -43,13 +45,14 @@ There are two scripts in this folder:
 
 ## Each release
 
-1. **Build a universal Release in Xcode** (xcodebuild is off-limits here, so do
+1. **Build a universal Release via Archive** (xcodebuild is off-limits here, so do
    this in the IDE):
-   - Scheme → Edit Scheme → Run/Archive → Build Configuration = **Release**.
-   - Build Settings → Architectures = **Standard (arm64, x86_64)**, "Build Active
-     Architecture Only" = **No**.
-   - **Product → Archive**, then in the Organizer: **Distribute App → Developer ID
-     → Export** (let Xcode sign with Developer ID). Save the exported `Blink.app`.
+   - **Product → Archive.** This is mandatory for a universal binary — a normal
+     ⌘B / Run build is single-arch, because Xcode forces "build active architecture
+     only" for the run destination regardless of project settings. Archive (a
+     distribution build) ignores that and builds arm64 + x86_64.
+   - In the Organizer: **Distribute App → Developer ID → Export** (let Xcode sign
+     with Developer ID). Save the exported `Blink.app`.
 
    This build is what carries your latest code — including the single-instance
    guard. The DMG on the site won't have it until you rebuild here.
