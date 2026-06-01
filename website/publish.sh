@@ -64,6 +64,22 @@ SRC_APP="${APP_PATH:-$(pick_signable_app)}"
 [[ -n "$SRC_APP" && -d "$SRC_APP" ]] \
   || die "no built Blink.app with the current Sparkle key ($EXPECT_KEY) in DerivedData — build from the current source in Xcode first."
 
+# Universal-binary guard — a thin (single-arch) build excludes half of all Macs:
+# an Intel-only app needs Rosetta on Apple Silicon, an arm64-only one won't launch
+# on Intel at all. IMPORTANT: a normal Xcode ⌘B/Run build is single-arch — Xcode
+# injects ONLY_ACTIVE_ARCH=YES for the active run destination, overriding the
+# project setting, so it only builds the host arch. Only Product → Archive (a
+# distribution build) produces a universal binary. Pass that archived app to this
+# script (see message below). Refuse to ship a thin binary unless overridden.
+SRC_EXEC="$SRC_APP/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$SRC_APP/Contents/Info.plist" 2>/dev/null || echo Blink)"
+SRC_ARCHS="$(lipo -archs "$SRC_EXEC" 2>/dev/null || true)"
+if [[ "${ALLOW_SINGLE_ARCH:-0}" != "1" ]] && ! [[ "$SRC_ARCHS" == *arm64* && "$SRC_ARCHS" == *x86_64* ]]; then
+  die "built app is NOT universal (archs: ${SRC_ARCHS:-unknown}) — it would force Rosetta or fail to launch on half of all Macs. A normal ⌘B build is single-arch here; in Xcode use Product → Archive, then re-run pointing at the archived app:
+       ./publish.sh \"\$(ls -dt \$HOME/Library/Developer/Xcode/Archives/*/*.xcarchive | head -1)/Products/Applications/Blink.app\"
+     To ship a thin build anyway: ALLOW_SINGLE_ARCH=1 ./publish.sh"
+fi
+say "Build is universal (archs: $SRC_ARCHS)."
+
 # Next build number = one higher than anything we've already published. We never
 # regress: take the max of .last-version, the live appcast, and the built app's
 # own CFBundleVersion, then add one. This is the bump that used to be manual.

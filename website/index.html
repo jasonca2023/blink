@@ -153,7 +153,7 @@
         </li>
         <li class="install-step">
           <span class="install-n">03</span>
-          <div><h3>Open it the first time</h3><p>This build isn't notarized yet, so macOS warns once. Right-click Blink and choose Open, or approve it in System Settings &rarr; Privacy &amp; Security &rarr; Open Anyway. On Apple Silicon, approve the Rosetta install if prompted.</p></div>
+          <div><h3>Open it the first time</h3><p>This build isn't notarized by Apple yet, so macOS blocks the first launch. The reliable fix: open Terminal and run <code>xattr -dr com.apple.quarantine /Applications/Blink.app</code>, then double-click Blink. (GUI alternative: right-click Blink &rarr; Open; if only Move to Trash appears, go to System Settings &rarr; Privacy &amp; Security &rarr; Open Anyway.) You only do this once.</p></div>
         </li>
         <li class="install-step">
           <span class="install-n">04</span>
