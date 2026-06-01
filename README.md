@@ -2,6 +2,8 @@
 
 Blink is a native macOS menu-bar AI companion. Hold ctrl+option for voice push-to-talk, or double-tap ctrl for the text bar. Blink captures your screen, understands what you're looking at, replies in voice, and can drive the UI on your behalf — click buttons, open apps, run searches, fill in text — through the macOS Accessibility tree (no pixel guessing).
 
+**[Download Blink →](https://website-jason-guo.vercel.app)** — free, universal binary (Apple Silicon + Intel), macOS 14.2+. Bring your own API keys.
+
 ## Features
 
 - **Voice push-to-talk.** Hold ctrl+option, ask anything, let go. Blink answers in one or two sentences and only speaks when asked.
