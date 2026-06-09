@@ -1,5 +1,32 @@
+//
+//  Hallmark · component: settings-window · genre: atmospheric · theme: graphite (blue-anchored neutrals · user accent)
+//  states: default · hover · focus · active · disabled · selected
+//  pre-emit critique: P4 H5 E4 S4 R5 V4
+//
+
 import AppKit
 import SwiftUI
+
+/// Settings-local surface tokens. Blue-anchored graphite (anchor follows the
+/// cursor accent, hue ~250) — deliberately NOT the violet DS "Dusk" ramp,
+/// which reads as the stock AI dark mode. Elevation = lightness: each layer
+/// sits ~3% lighter than the one below it.
+private enum SettingsTheme {
+    /// Window canvas — the deepest layer.
+    static let canvas = Color(hex: "#0E1116")
+    /// Sidebar and group cards.
+    static let raised = Color(hex: "#14171D")
+    /// Inputs, tiles, chips, nested wells.
+    static let well = Color(hex: "#1A1E25")
+    /// Hover state on interactive fills.
+    static let hover = Color(hex: "#212630")
+    /// Pressed state on interactive fills.
+    static let pressed = Color(hex: "#282E3A")
+    /// Hairline rules and input borders.
+    static let rule = Color(hex: "#313845")
+    /// Hovered/strong borders.
+    static let ruleStrong = Color(hex: "#424B5C")
+}
 
 @MainActor
 final class BlinkSettingsWindowManager {
@@ -87,6 +114,11 @@ final class BlinkSettingsWindowManager {
         settingsWindow.isReleasedWhenClosed = false
         settingsWindow.titlebarAppearsTransparent = true
         settingsWindow.toolbarStyle = .unified
+        // Settings is committed to the DS "Dusk" system like the rest of
+        // Blink's chrome, so native controls must render dark regardless
+        // of the system appearance.
+        settingsWindow.appearance = NSAppearance(named: .darkAqua)
+        settingsWindow.backgroundColor = NSColor(SettingsTheme.canvas)
         settingsWindow.level = .normal
         settingsWindow.collectionBehavior.insert(.fullScreenAuxiliary)
         settingsWindow.center()
@@ -198,23 +230,33 @@ struct BlinkSettingsView: View {
         self.backgroundComputerUseController = companionManager.backgroundComputerUseController
     }
 
+    private var settingsAccentTheme: BlinkAccentTheme {
+        BlinkAccentTheme(rawValue: selectedAccentThemeID) ?? .blue
+    }
+
+    private var settingsAccent: Color {
+        settingsAccentTheme.cursorColor
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             sidebar
 
-            Divider()
+            Rectangle()
+                .fill(SettingsTheme.rule)
+                .frame(width: 1)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 22) {
                     sectionHeader
                     selectedPanel
                 }
                 .frame(maxWidth: 760, alignment: .leading)
-                .padding(.horizontal, 28)
-                .padding(.vertical, 24)
+                .padding(.horizontal, 32)
+                .padding(.vertical, 28)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(SettingsTheme.canvas)
         }
         .frame(minWidth: 1040, minHeight: 660)
         .onChange(of: selectedSection) { _, newSection in
@@ -225,31 +267,30 @@ struct BlinkSettingsView: View {
     }
 
     private var sidebar: some View {
-        let accent = (BlinkAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor
-
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 9) {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
                 Triangle()
-                    .fill(
-                        LinearGradient(
-                            colors: [accent, accent.opacity(0.55)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .frame(width: 14, height: 14)
+                    .fill(settingsAccent)
+                    .frame(width: 13, height: 13)
                     .rotationEffect(.degrees(-22))
-                    .shadow(color: accent.opacity(0.6), radius: 4)
                 Text("Blink")
-                    .font(.system(size: 19, weight: .bold))
-                    .tracking(0.2)
+                    .font(DS.Typography.heading(16))
+                    .tracking(-0.3)
+                    .foregroundColor(DS.Colors.textPrimary)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 22)
-            .padding(.bottom, 16)
+            .padding(.horizontal, 18)
+            .padding(.top, 24)
+            .padding(.bottom, 18)
 
             ForEach(BlinkSettingsSection.allCases) { section in
-                sidebarRow(section: section, accent: accent)
+                SettingsSidebarRow(
+                    title: section.title,
+                    systemImageName: section.systemImageName,
+                    accent: settingsAccent,
+                    isSelected: selectedSection == section,
+                    action: { selectedSection = section }
+                )
+                .padding(.horizontal, 10)
             }
 
             Spacer()
@@ -257,99 +298,33 @@ struct BlinkSettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(BlinkAgentBackendKind.current() == .huggingFace ? "Backend · HF" : "Backend · OpenAI")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(DS.Colors.textTertiary)
                 Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—")")
                     .font(.system(size: 10))
-                    .foregroundColor(.secondary.opacity(0.7))
+                    .foregroundColor(DS.Colors.textTertiary)
             }
             .padding(.horizontal, 18)
             .padding(.bottom, 14)
         }
         .frame(width: 200)
-        .background(
-            ZStack {
-                Rectangle()
-                    .fill(.thickMaterial)
-                LinearGradient(
-                    colors: [accent.opacity(0.10), Color.clear],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .allowsHitTesting(false)
-            }
-        )
-    }
-
-    private func sidebarRow(section: BlinkSettingsSection, accent: Color) -> some View {
-        let selected = selectedSection == section
-        return Button {
-            selectedSection = section
-        } label: {
-            HStack(spacing: 11) {
-                Image(systemName: section.systemImageName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 22)
-                    .foregroundColor(selected ? accent : .secondary)
-                Text(section.title)
-                    .font(.system(size: 13, weight: selected ? .semibold : .medium))
-                    .foregroundColor(selected ? .primary : .secondary)
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 34)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(selected ? accent.opacity(0.16) : Color.clear)
-            )
-            .overlay(
-                HStack {
-                    RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(accent)
-                        .frame(width: 3)
-                        .opacity(selected ? 1 : 0)
-                    Spacer()
-                }
-                .padding(.leading, 2)
-            )
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 10)
+        .background(SettingsTheme.raised)
     }
 
     private var sectionHeader: some View {
-        let accent = (BlinkAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor
-
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 11) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(accent.opacity(0.18))
-                        .frame(width: 36, height: 36)
-                    Image(systemName: selectedSection.systemImageName)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(accent)
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(selectedSection.title)
-                        .font(.system(size: 24, weight: .bold))
-                        .tracking(0.1)
-                    Text(sectionSubtitle)
-                        .font(.system(size: 12.5))
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(selectedSection.title)
+                    .font(DS.Typography.heading(26))
+                    .tracking(-0.6)
+                    .foregroundColor(DS.Colors.textPrimary)
+                Text(sectionSubtitle)
+                    .font(.system(size: 12.5))
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Rectangle()
-                .fill(
-                    LinearGradient(
-                        colors: [accent.opacity(0.55), accent.opacity(0.0)],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
+                .fill(SettingsTheme.rule)
                 .frame(height: 1)
-                .padding(.top, 8)
         }
     }
 
@@ -413,9 +388,7 @@ struct BlinkSettingsView: View {
                     )
                 )
 
-                Divider()
-                    .opacity(0.25)
-                    .padding(.horizontal, 14)
+                settingsRowDivider
 
                 toggleRow(
                     title: "Advanced mode",
@@ -432,7 +405,7 @@ struct BlinkSettingsView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     Text("Pick Blink's cursor shape and accent color. Pets ignore the color tint, but the accent drives glows, buttons, and task badges.")
                         .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(DS.Colors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
 
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
@@ -476,15 +449,16 @@ struct BlinkSettingsView: View {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: "wand.and.stars")
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(DS.Colors.textSecondary)
                         .frame(width: 24)
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Skill-powered tutoring")
                             .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(DS.Colors.textPrimary)
                         Text("This section is ready for the tutor skills controls that will be wired in next.")
                             .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+                            .foregroundColor(DS.Colors.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
@@ -603,15 +577,6 @@ struct BlinkSettingsView: View {
                     isOn: $voiceResponseCaptionsEnabled
                 )
 
-                Picker("Caption font", selection: $voiceResponseCaptionFontRawValue) {
-                    ForEach(BlinkResponseCaptionFont.allCases) { captionFont in
-                        Text(captionFont.label).tag(captionFont.rawValue)
-                    }
-                }
-                .pickerStyle(.menu)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 11)
-
                 LazyVGrid(columns: settingsOptionColumns(3), spacing: 8) {
                     ForEach(BlinkResponseCaptionFont.allCases) { captionFont in
                         optionButton(
@@ -623,6 +588,7 @@ struct BlinkSettingsView: View {
                     }
                 }
                 .padding(.horizontal, 14)
+                .padding(.top, 4)
                 .padding(.bottom, 11)
 
                 actionRow(title: "Test caption playback", systemImageName: "play.circle") {
@@ -651,9 +617,8 @@ struct BlinkSettingsView: View {
                     if !BlinkModelCatalog.isSpeechModelID(companionManager.selectedModel) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Playback engine")
-                                .font(.system(size: 10, weight: .semibold))
-                                .tracking(0.6)
-                                .foregroundColor(.secondary.opacity(0.8))
+                                .font(DS.Typography.label(11))
+                                .foregroundColor(DS.Colors.textTertiary)
 
                             Picker("", selection: Binding(
                                 get: { companionManager.selectedTTSProvider },
@@ -673,12 +638,12 @@ struct BlinkSettingsView: View {
                         case .openAITTS:
                             Text("OpenAI's /v1/audio/speech endpoint. Voice: nova by default. Uses OPENAI_API_KEY.")
                                 .font(.system(size: 11))
-                                .foregroundColor(.secondary)
+                                .foregroundColor(DS.Colors.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         case .system:
                             Text("Uses the built-in macOS voice (Siri / Samantha). No API key required.")
                                 .font(.system(size: 11))
-                                .foregroundColor(.secondary)
+                                .foregroundColor(DS.Colors.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         case .openAIRealtime:
                             EmptyView()
@@ -708,7 +673,7 @@ struct BlinkSettingsView: View {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text("Deepgram TTS reuses the Deepgram API key set under API Keys.")
                                     .font(.system(size: 11))
-                                    .foregroundColor(.secondary)
+                                    .foregroundColor(DS.Colors.textSecondary)
                                     .fixedSize(horizontal: false, vertical: true)
                                 textFieldRow(
                                     title: "Deepgram TTS voice",
@@ -725,14 +690,13 @@ struct BlinkSettingsView: View {
                             VStack(alignment: .leading, spacing: 14) {
                                 Text("Microsoft Edge voices are the free online Read Aloud voices and do not need an API key.")
                                     .font(.system(size: 11))
-                                    .foregroundColor(.secondary)
+                                    .foregroundColor(DS.Colors.textSecondary)
                                     .fixedSize(horizontal: false, vertical: true)
 
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("Voices")
-                                        .font(.system(size: 10, weight: .semibold))
-                                        .tracking(0.6)
-                                        .foregroundColor(.secondary.opacity(0.8))
+                                        .font(DS.Typography.label(11))
+                                        .foregroundColor(DS.Colors.textTertiary)
 
                                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {
                                         ForEach(MicrosoftEdgeVoiceOption.recommended) { voice in
@@ -1053,7 +1017,7 @@ struct BlinkSettingsView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Pick the model that powers Agent Mode tasks. OpenAI is the default (Codex via gpt-5/o-series). HuggingFace routes through the open-source Qwen2.5-Coder using your HF token.")
                         .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(DS.Colors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
 
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
@@ -1210,29 +1174,20 @@ struct BlinkSettingsView: View {
         HStack(alignment: .top, spacing: 13) {
             ZStack {
                 Circle()
-                    .fill(Color(nsColor: .windowBackgroundColor))
-                    .overlay(
-                        Circle()
-                            .stroke(
-                                AngularGradient(
-                                    colors: [.blue, .red, .yellow, .green, .blue],
-                                    center: .center
-                                ),
-                                lineWidth: 3
-                            )
-                    )
+                    .fill(SettingsTheme.well)
                 Text("G")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
-                    .foregroundStyle(.primary)
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .foregroundColor(DS.Colors.textPrimary)
             }
-            .frame(width: 38, height: 38)
+            .frame(width: 36, height: 36)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(gogCLIStatus.readinessTitle)
                     .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(DS.Colors.textPrimary)
                 Text(gogCLIStatus.readinessDetail)
                     .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .foregroundColor(DS.Colors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
@@ -1249,7 +1204,7 @@ struct BlinkSettingsView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Blink embeds its bundled app-help corpus (Onshape, Blender, Photoshop, Illustrator, Figma) with all-MiniLM-L6-v2 via HuggingFace, then retrieves the top matches when you ask a how-to question. Falls back to lexical retrieval if the index isn't ready.")
                         .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(DS.Colors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
 
                     HStack(spacing: 14) {
@@ -1265,13 +1220,9 @@ struct BlinkSettingsView: View {
                                 Image(systemName: "arrow.triangle.2.circlepath")
                                     .font(.system(size: 11, weight: .semibold))
                                 Text("Rebuild index")
-                                    .font(.system(size: 12, weight: .semibold))
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
+                        .buttonStyle(SettingsPillButtonStyle(emphasis: .filled))
                     }
                 }
                 .padding(14)
@@ -1322,7 +1273,7 @@ struct BlinkSettingsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Blink remembers what you tell it across sessions in a local store on your Mac, scoped to the app you're in — no setup or server needed. Recall is automatic; you can review or delete what's saved here, or just say \"forget what I said about …\". Embedding past exchanges needs an OpenAI or Hugging Face key.")
                     .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(DS.Colors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 14) {
@@ -1335,13 +1286,9 @@ struct BlinkSettingsView: View {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 11, weight: .semibold))
                             Text("Refresh")
-                                .font(.system(size: 12, weight: .semibold))
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(SettingsPillButtonStyle(emphasis: .soft))
                     .disabled(chromaBusy)
                 }
 
@@ -1361,55 +1308,35 @@ struct BlinkSettingsView: View {
     }
 
     private var conversationMemoryStatusChip: some View {
-        let accent = (BlinkAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor
         let reachable = chromaStatus?.reachable ?? false
         let count = chromaStatus?.count ?? 0
         let model = chromaStatus?.currentModel
         let dotColor = reachable ? DS.Colors.success : DS.Colors.warning
-        return HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(accent.opacity(0.16))
-                Image(systemName: "brain.head.profile")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(accent)
-            }
-            .frame(width: 34, height: 34)
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Circle().fill(dotColor).frame(width: 6, height: 6)
-                    Text(reachable ? "\(count) stored exchange\(count == 1 ? "" : "s")" : "Memory unavailable")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(DS.Colors.textPrimary)
-                }
+        return HStack(spacing: 8) {
+            Circle().fill(dotColor).frame(width: 7, height: 7)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(reachable ? "\(count) stored exchange\(count == 1 ? "" : "s")" : "Memory unavailable")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(DS.Colors.textPrimary)
                 Text(reachable ? (model ?? "add an OpenAI or Hugging Face key to enable recall") : "add an OpenAI or Hugging Face key to enable recall")
                     .font(.system(size: 10))
                     .foregroundColor(DS.Colors.textTertiary)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(0.04))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(accent.opacity(0.20), lineWidth: 0.8)
+            RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                .fill(SettingsTheme.well)
         )
     }
 
     private func conversationMemoryMismatchWarning(_ status: ChromaMemoryStatus) -> some View {
         HStack(alignment: .top, spacing: 11) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(DS.Colors.warning.opacity(0.18))
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(DS.Colors.warning)
-            }
-            .frame(width: 30, height: 30)
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(DS.Colors.warningText)
+                .padding(.top, 1)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Embedding model changed")
@@ -1423,21 +1350,20 @@ struct BlinkSettingsView: View {
                     Task { await resetChromaMemory() }
                 } label: {
                     Text("Reset memory")
-                        .font(.system(size: 12, weight: .semibold))
                 }
-                .controlSize(.small)
+                .buttonStyle(SettingsPillButtonStyle(emphasis: .destructive))
                 .disabled(chromaBusy)
                 .padding(.top, 2)
             }
         }
         .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: DS.CornerRadius.extraLarge, style: .continuous)
                 .fill(DS.Colors.warning.opacity(0.10))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(DS.Colors.warning.opacity(0.30), lineWidth: 0.8)
+            RoundedRectangle(cornerRadius: DS.CornerRadius.extraLarge, style: .continuous)
+                .stroke(DS.Colors.warning.opacity(0.30), lineWidth: 1)
         )
     }
 
@@ -1445,8 +1371,7 @@ struct BlinkSettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Stored memories")
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(0.7)
+                    .font(DS.Typography.label(11))
                     .foregroundColor(DS.Colors.textTertiary)
                 if chromaMemoriesLoaded, !chromaMemories.isEmpty {
                     Text("\(chromaMemories.count)")
@@ -1454,14 +1379,14 @@ struct BlinkSettingsView: View {
                         .foregroundColor(DS.Colors.textTertiary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.white.opacity(0.07)))
+                        .background(Capsule().fill(SettingsTheme.hover))
                 }
                 Spacer()
                 if !chromaMemoriesLoaded {
                     Button("Show") {
                         Task { await loadChromaMemories() }
                     }
-                    .controlSize(.small)
+                    .buttonStyle(SettingsPillButtonStyle(emphasis: .soft))
                     .disabled(chromaBusy || count == 0)
                 } else if !chromaMemories.isEmpty {
                     Button(role: .destructive) {
@@ -1469,10 +1394,11 @@ struct BlinkSettingsView: View {
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "trash")
+                                .font(.system(size: 10, weight: .semibold))
                             Text("Forget all")
                         }
                     }
-                    .controlSize(.small)
+                    .buttonStyle(SettingsPillButtonStyle(emphasis: .destructive))
                     .disabled(chromaBusy)
                 }
             }
@@ -1505,7 +1431,7 @@ struct BlinkSettingsView: View {
     }
 
     private func conversationMemoryRow(_ record: ChromaMemoryRecord) -> some View {
-        let accent = (BlinkAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor
+        let accent = settingsAccent
         let hovered = hoveredMemoryID == record.id
         return HStack(alignment: .top, spacing: 0) {
             RoundedRectangle(cornerRadius: 2, style: .continuous)
@@ -1525,7 +1451,7 @@ struct BlinkSettingsView: View {
                         .foregroundColor(DS.Colors.textTertiary)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
-                        .background(Capsule().fill(Color.white.opacity(0.06)))
+                        .background(Capsule().fill(SettingsTheme.hover))
                     }
                     if let time = record.timestamp.flatMap(Self.relativeMemoryTimestamp) {
                         Text(time)
@@ -1540,7 +1466,7 @@ struct BlinkSettingsView: View {
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(hovered ? DS.Colors.destructiveText : DS.Colors.textTertiary)
                             .frame(width: 24, height: 24)
-                            .background(Circle().fill(Color.white.opacity(hovered ? 0.07 : 0)))
+                            .background(Circle().fill(hovered ? SettingsTheme.pressed : Color.clear))
                     }
                     .buttonStyle(.plain)
                     .disabled(chromaBusy)
@@ -1568,12 +1494,8 @@ struct BlinkSettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(hovered ? 0.06 : 0.03))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.white.opacity(hovered ? 0.10 : 0.05), lineWidth: 0.8)
+            RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
+                .fill(hovered ? SettingsTheme.hover : SettingsTheme.well)
         )
         .contentShape(Rectangle())
         .onHover { isHovering in
@@ -1583,7 +1505,7 @@ struct BlinkSettingsView: View {
                 hoveredMemoryID = nil
             }
         }
-        .animation(.easeOut(duration: 0.12), value: hovered)
+        .animation(.easeOut(duration: DS.Animation.fast), value: hovered)
     }
 
     private func conversationMemoryMessageLine(icon: String, iconColor: Color, text: String, textColor: Color) -> some View {
@@ -1817,27 +1739,23 @@ struct BlinkSettingsView: View {
     }
 
     private var semanticIndexStatusChip: some View {
-        let accent = (BlinkAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor
-        let dotColor: Color = semanticIndexReady ? .green : .orange
+        let dotColor: Color = semanticIndexReady ? DS.Colors.success : DS.Colors.warning
         return HStack(spacing: 8) {
             Circle().fill(dotColor).frame(width: 7, height: 7)
             VStack(alignment: .leading, spacing: 1) {
                 Text(semanticIndexReady ? "Ready · \(semanticIndexCount) entries" : "Not ready · using lexical fallback")
                     .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(DS.Colors.textPrimary)
                 Text(semanticIndexModel.isEmpty ? "all-MiniLM-L6-v2" : semanticIndexModel)
                     .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(DS.Colors.textTertiary)
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(accent.opacity(0.10))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(accent.opacity(0.25), lineWidth: 0.8)
+            RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                .fill(SettingsTheme.well)
         )
     }
 
@@ -1859,37 +1777,36 @@ struct BlinkSettingsView: View {
     }
 
     private var liveAgentControlGroup: some View {
-        let accent = (BlinkAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor
+        let accent = settingsAccent
 
         return settingsGroup("Live agent control") {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Type what you want Blink to do — open apps, click buttons, fill in text. Claude drives the cursor and keyboard through Blink's signed Accessibility permission. Press Esc anywhere to pause; click Stop to abort.")
                     .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(DS.Colors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 8) {
-                    TextField("e.g. open Safari and search for the weather in Tokyo", text: $liveAgentPrompt, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                        .lineLimit(1...4)
-                        .disabled(liveAgentController.isRunning)
-                        .onSubmit { runLiveAgent() }
+                    SettingsTextField(
+                        placeholder: "e.g. open Safari and search for the weather in Tokyo",
+                        text: $liveAgentPrompt,
+                        axis: .vertical,
+                        lineLimit: 1...4
+                    )
+                    .disabled(liveAgentController.isRunning)
+                    .onSubmit { runLiveAgent() }
 
                     if liveAgentController.isRunning {
                         Button(liveAgentController.isPaused ? "Resume" : "Pause") {
                             liveAgentController.togglePause()
                         }
-                        .controlSize(.small)
-                        .buttonStyle(.bordered)
+                        .buttonStyle(SettingsPillButtonStyle(emphasis: .soft))
 
                         Button("Stop") { liveAgentController.stop() }
-                            .controlSize(.small)
-                            .buttonStyle(.borderedProminent)
-                            .tint(.red)
+                            .buttonStyle(SettingsPillButtonStyle(emphasis: .destructive))
                     } else {
                         Button("Run") { runLiveAgent() }
-                            .controlSize(.small)
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(SettingsPillButtonStyle(emphasis: .filled))
                             .disabled(liveAgentPrompt.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                 }
@@ -1898,37 +1815,36 @@ struct BlinkSettingsView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 6) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundColor(.orange)
+                                .foregroundColor(DS.Colors.warningText)
                             Text("Confirm: \(pending.summary)")
                                 .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(DS.Colors.textPrimary)
                         }
                         Text(pending.reason)
                             .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+                            .foregroundColor(DS.Colors.textSecondary)
                         HStack(spacing: 8) {
                             Button("Approve") { liveAgentController.approvePending() }
-                                .controlSize(.small)
-                                .buttonStyle(.borderedProminent)
+                                .buttonStyle(SettingsPillButtonStyle(emphasis: .filled))
                             Button("Deny") { liveAgentController.rejectPending() }
-                                .controlSize(.small)
-                                .buttonStyle(.bordered)
+                                .buttonStyle(SettingsPillButtonStyle(emphasis: .soft))
                         }
                     }
                     .padding(10)
                     .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.orange.opacity(0.12))
+                        RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                            .fill(DS.Colors.warning.opacity(0.10))
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(Color.orange.opacity(0.4), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                            .strokeBorder(DS.Colors.warning.opacity(0.30), lineWidth: 1)
                     )
                 }
 
                 if liveAgentController.transcript.isEmpty {
                     Text("Transcript will appear here once the agent starts.")
                         .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(DS.Colors.textTertiary)
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 6) {
@@ -1941,15 +1857,14 @@ struct BlinkSettingsView: View {
                     }
                     .frame(maxHeight: 220)
                     .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.black.opacity(0.04))
+                        RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                            .fill(SettingsTheme.well)
                     )
 
                     HStack {
                         Spacer()
                         Button("Clear transcript") { liveAgentController.clearTranscript() }
-                            .controlSize(.small)
-                            .buttonStyle(.bordered)
+                            .buttonStyle(SettingsPillButtonStyle(emphasis: .soft))
                     }
                 }
             }
@@ -1974,72 +1889,72 @@ struct BlinkSettingsView: View {
                     .font(.system(size: 11))
                 Text(entry.text)
                     .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
             }
         case .assistantText:
             HStack(alignment: .top, spacing: 6) {
                 Image(systemName: "sparkles")
-                    .foregroundColor(.purple)
+                    .foregroundColor(DS.Colors.info)
                     .font(.system(size: 11))
                 Text(entry.text)
                     .font(.system(size: 12))
+                    .foregroundColor(DS.Colors.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         case .toolCall(let name, let argumentsJSON):
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Image(systemName: "wrench.adjustable.fill")
-                        .foregroundColor(.blue)
+                        .foregroundColor(DS.Colors.textTertiary)
                         .font(.system(size: 10))
                     Text(name)
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(DS.Colors.codeText)
                 }
                 Text(argumentsJSON)
                     .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(DS.Colors.textTertiary)
                     .lineLimit(4)
             }
         case .toolResult(_, let status, let detail):
             HStack(alignment: .top, spacing: 6) {
                 Image(systemName: status == "ok" ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                    .foregroundColor(status == "ok" ? .green : .red)
+                    .foregroundColor(status == "ok" ? DS.Colors.success : DS.Colors.destructiveText)
                     .font(.system(size: 10))
                 Text(detail)
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(DS.Colors.textSecondary)
                     .lineLimit(3)
             }
         case .info:
             Text(entry.text)
                 .font(.system(size: 11))
-                .foregroundColor(.secondary)
+                .foregroundColor(DS.Colors.textTertiary)
                 .italic()
         case .error:
             HStack(alignment: .top, spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.red)
+                    .foregroundColor(DS.Colors.destructiveText)
                     .font(.system(size: 10))
                 Text(entry.text)
                     .font(.system(size: 11))
-                    .foregroundColor(.red)
+                    .foregroundColor(DS.Colors.destructiveText)
             }
         }
     }
 
     private var nativeClickTesterGroup: some View {
-        let accent = (BlinkAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor
-
-        return settingsGroup("Native click tester") {
+        settingsGroup("Native click tester") {
             VStack(alignment: .leading, spacing: 18) {
                 Text("Direct mouse posting through Blink's signed Accessibility entitlement. Coordinates are top-left origin. Use this to verify clicks land where you expect before letting the agent drive them.")
                     .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(DS.Colors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Coordinates")
-                        .font(.system(size: 10, weight: .semibold))
-                        .tracking(0.6)
-                        .foregroundColor(.secondary.opacity(0.8))
+                        .font(DS.Typography.label(11))
+                        .foregroundColor(DS.Colors.textTertiary)
 
                     LazyVGrid(
                         columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3),
@@ -2057,27 +1972,23 @@ struct BlinkSettingsView: View {
                                 clickTesterY = String(Int(height - location.y))
                             } label: {
                                 Label("Use cursor", systemImage: "scope")
-                                    .font(.system(size: 12, weight: .medium))
                                     .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 5)
                             }
-                            .buttonStyle(.bordered)
-                            .controlSize(.regular)
+                            .buttonStyle(SettingsPillButtonStyle(emphasis: .soft))
                         }
                     }
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.primary.opacity(0.04))
+                    RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
+                        .fill(SettingsTheme.well)
                 )
 
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Actions")
-                        .font(.system(size: 10, weight: .semibold))
-                        .tracking(0.6)
-                        .foregroundColor(.secondary.opacity(0.8))
+                        .font(DS.Typography.label(11))
+                        .foregroundColor(DS.Colors.textTertiary)
 
                     LazyVGrid(
                         columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3),
@@ -2110,10 +2021,10 @@ struct BlinkSettingsView: View {
                 HStack(spacing: 8) {
                     Image(systemName: clickTesterStatus.hasPrefix("✗") ? "exclamationmark.triangle.fill" : "info.circle")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(clickTesterStatus.hasPrefix("✗") ? .orange : accent)
+                        .foregroundColor(clickTesterStatus.hasPrefix("✗") ? DS.Colors.warningText : DS.Colors.textTertiary)
                     Text(clickTesterStatus)
                         .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(DS.Colors.textSecondary)
                         .lineLimit(2)
                         .truncationMode(.middle)
                 }
@@ -2121,8 +2032,8 @@ struct BlinkSettingsView: View {
                 .padding(.vertical, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.primary.opacity(0.035))
+                    RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                        .fill(SettingsTheme.well)
                 )
             }
             .padding(18)
@@ -2133,10 +2044,8 @@ struct BlinkSettingsView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(label)
                 .font(.system(size: 10, weight: .semibold))
-                .tracking(0.4)
-                .foregroundColor(.secondary)
-            TextField("0", text: text)
-                .textFieldStyle(.roundedBorder)
+                .foregroundColor(DS.Colors.textTertiary)
+            SettingsTextField(placeholder: "0", text: text)
                 .frame(maxWidth: .infinity)
         }
     }
@@ -2159,14 +2068,10 @@ struct BlinkSettingsView: View {
                 Image(systemName: systemImageName)
                     .font(.system(size: 12, weight: .semibold))
                 Text(title)
-                    .font(.system(size: 12, weight: .medium))
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
             .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.bordered)
-        .controlSize(.regular)
+        .buttonStyle(SettingsPillButtonStyle(emphasis: .soft))
     }
 
     private func parsedClickPoint() -> CGPoint? {
@@ -2178,47 +2083,37 @@ struct BlinkSettingsView: View {
     }
 
     private func settingsGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        let accent = (BlinkAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor
-
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(accent)
-                    .frame(width: 5, height: 5)
-                Text(title.uppercased())
-                    .font(.system(size: 11, weight: .bold))
-                    .tracking(0.7)
-                    .foregroundColor(.secondary)
-            }
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(DS.Typography.heading(13))
+                .foregroundColor(DS.Colors.textSecondary)
+                .padding(.leading, 2)
             VStack(spacing: 0) {
                 content()
             }
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.thickMaterial)
+                RoundedRectangle(cornerRadius: DS.CornerRadius.extraLarge, style: .continuous)
+                    .fill(SettingsTheme.raised)
             )
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.black.opacity(0.06))
-            )
+            .clipShape(RoundedRectangle(cornerRadius: DS.CornerRadius.extraLarge, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(
-                        LinearGradient(
-                            colors: [accent.opacity(0.25), Color.primary.opacity(0.06)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 0.8
-                    )
+                RoundedRectangle(cornerRadius: DS.CornerRadius.extraLarge, style: .continuous)
+                    .stroke(SettingsTheme.rule, lineWidth: 1)
             )
         }
+    }
+
+    private var settingsRowDivider: some View {
+        Rectangle()
+            .fill(SettingsTheme.rule)
+            .frame(height: 1)
+            .padding(.horizontal, 14)
     }
 
     private func groupDescription(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 11))
-            .foregroundColor(.secondary)
+            .foregroundColor(DS.Colors.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 14)
             .padding(.top, 14)
@@ -2235,29 +2130,24 @@ struct BlinkSettingsView: View {
             HStack(spacing: 7) {
                 Image(systemName: systemImageName)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.accentColor)
+                    .foregroundColor(settingsAccent)
                     .frame(width: 16)
-                Text(title.uppercased())
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(.secondary)
-                    .tracking(0.6)
+                Text(title)
+                    .font(DS.Typography.label(11))
+                    .foregroundColor(DS.Colors.textTertiary)
             }
 
             Text(value)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.primary)
+                .foregroundColor(DS.Colors.textPrimary)
                 .lineLimit(2)
                 .minimumScaleFactor(0.85)
         }
         .padding(12)
         .frame(maxWidth: .infinity, minHeight: 74, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color(nsColor: .windowBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(Color.accentColor.opacity(0.18), lineWidth: 1)
+            RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
+                .fill(SettingsTheme.well)
         )
     }
 
@@ -2265,13 +2155,18 @@ struct BlinkSettingsView: View {
         HStack(spacing: 12) {
             rowIcon(systemImageName)
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 13, weight: .medium))
-                Text(subtitle).font(.system(size: 11)).foregroundColor(.secondary)
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.textSecondary)
             }
             Spacer()
             Toggle("", isOn: isOn)
                 .labelsHidden()
                 .toggleStyle(.switch)
+                .tint(settingsAccent)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
@@ -2281,10 +2176,12 @@ struct BlinkSettingsView: View {
         HStack(spacing: 12) {
             rowIcon(systemImageName)
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 13, weight: .medium))
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
                 Text(subtitle)
                     .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(DS.Colors.textSecondary)
                     .lineLimit(2)
                     .truncationMode(.middle)
             }
@@ -2299,14 +2196,16 @@ struct BlinkSettingsView: View {
 
     private func warningRow(title: String, subtitle: String) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            rowIcon("exclamationmark.triangle")
-                .foregroundColor(.orange)
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(DS.Colors.warningText)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
                 Text(subtitle)
                     .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(DS.Colors.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
@@ -2325,9 +2224,7 @@ struct BlinkSettingsView: View {
     ) -> some View {
         editableFieldRow(title: title, subtitle: subtitle, systemImageName: systemImageName) {
             HStack(spacing: 8) {
-                TextField(placeholder, text: text)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12))
+                SettingsTextField(placeholder: placeholder, text: text)
                 if let openPath {
                     settingsPathOpenButton(openPath())
                 }
@@ -2337,9 +2234,7 @@ struct BlinkSettingsView: View {
 
     private func secureFieldRow(title: String, subtitle: String, systemImageName: String, placeholder: String, text: Binding<String>) -> some View {
         editableFieldRow(title: title, subtitle: subtitle, systemImageName: systemImageName) {
-            SecureField(placeholder, text: text)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 12))
+            SettingsTextField(placeholder: placeholder, text: text, isSecure: true)
         }
     }
 
@@ -2352,8 +2247,12 @@ struct BlinkSettingsView: View {
         HStack(alignment: .top, spacing: 12) {
             rowIcon(systemImageName)
             VStack(alignment: .leading, spacing: 6) {
-                Text(title).font(.system(size: 13, weight: .medium))
-                Text(subtitle).font(.system(size: 11)).foregroundColor(.secondary)
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.textSecondary)
                 field()
             }
         }
@@ -2362,32 +2261,13 @@ struct BlinkSettingsView: View {
     }
 
     private func actionRow(title: String, systemImageName: String, role: ButtonRole? = nil, action: @escaping () -> Void) -> some View {
-        Button(role: role, action: action) {
-            HStack(spacing: 12) {
-                rowIcon(systemImageName)
-                Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+        SettingsActionRow(title: title, systemImageName: systemImageName, role: role, action: action)
     }
 
     private func settingsPathOpenButton(_ rawPath: String) -> some View {
-        Button {
+        SettingsIconButton(systemImageName: settingsPathOpenIconName(for: rawPath)) {
             openSettingsPath(rawPath)
-        } label: {
-            Image(systemName: settingsPathOpenIconName(for: rawPath))
-                .font(.system(size: 12, weight: .semibold))
-                .frame(width: 24, height: 24)
         }
-        .buttonStyle(.borderless)
         .help(settingsPathOpenHelpText(for: rawPath))
         .accessibilityLabel(settingsPathOpenHelpText(for: rawPath))
     }
@@ -2412,19 +2292,22 @@ struct BlinkSettingsView: View {
 
     private func permissionRow(title: String, isGranted: Bool, settingsURL: URL) -> some View {
         HStack(spacing: 12) {
-            rowIcon(isGranted ? "checkmark.circle" : "exclamationmark.triangle")
-                .foregroundColor(isGranted ? .green : .orange)
+            Image(systemName: isGranted ? "checkmark.circle" : "exclamationmark.triangle")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(isGranted ? DS.Colors.success : DS.Colors.warningText)
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 13, weight: .medium))
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
                 Text(isGranted ? "Granted" : "Needs permission")
                     .font(.system(size: 11))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(DS.Colors.textSecondary)
             }
             Spacer()
             Button("Open Settings") {
                 NSWorkspace.shared.open(settingsURL)
             }
-            .controlSize(.small)
+            .buttonStyle(SettingsPillButtonStyle(emphasis: .soft))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
@@ -2450,36 +2333,13 @@ struct BlinkSettingsView: View {
     }
 
     private func optionButton(title: String, subtitle: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.system(size: 12, weight: .semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                    Text(subtitle)
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.accentColor)
-                }
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? Color.accentColor.opacity(0.14) : Color(nsColor: .windowBackgroundColor))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(isSelected ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.08), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
+        SettingsOptionTile(
+            title: title,
+            subtitle: subtitle,
+            isSelected: isSelected,
+            accent: settingsAccent,
+            action: action
+        )
     }
 
 
@@ -2488,121 +2348,76 @@ struct BlinkSettingsView: View {
     }
 
     private func cursorColorButton(_ accentTheme: BlinkAccentTheme) -> some View {
-        let isSelected = selectedAccentThemeID == accentTheme.rawValue
-        return Button {
-            selectedAccentThemeID = accentTheme.rawValue
-        } label: {
-            VStack(spacing: 8) {
-                ZStack {
-                    Circle()
-                        .fill(accentTheme.cursorColor.opacity(0.18))
-                    Triangle()
-                        .fill(accentTheme.cursorColor)
-                        .frame(width: 18, height: 18)
-                        .rotationEffect(.degrees(-25))
-                }
-                .frame(width: 44, height: 44)
-
-                Text(accentTheme.title)
-                    .font(.system(size: 11, weight: .medium))
+        SettingsSelectableTile(
+            label: accentTheme.title,
+            isSelected: selectedAccentThemeID == accentTheme.rawValue,
+            accent: accentTheme.cursorColor,
+            action: { selectedAccentThemeID = accentTheme.rawValue }
+        ) {
+            ZStack {
+                Circle()
+                    .fill(accentTheme.cursorColor.opacity(0.18))
+                Triangle()
+                    .fill(accentTheme.cursorColor)
+                    .frame(width: 18, height: 18)
+                    .rotationEffect(.degrees(-25))
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(isSelected ? accentTheme.cursorColor.opacity(0.10) : Color.primary.opacity(0.04))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(isSelected ? accentTheme.cursorColor.opacity(0.55) : Color.primary.opacity(0.07), lineWidth: isSelected ? 1.2 : 0.8)
-            )
+            .frame(width: 44, height: 44)
         }
-        .buttonStyle(.plain)
     }
 
-
     private func cursorAvatarButton(_ style: BlinkCursorAvatarStyle, label: String) -> some View {
-        let isSelected = currentCursorAvatarStyle == style
-        let accent = (BlinkAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor
+        let accent = settingsAccent
 
-        return Button {
-            avatarStyleRawValue = style.storageValue
-        } label: {
-            VStack(spacing: 8) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(isSelected ? accent.opacity(0.16) : Color.primary.opacity(0.045))
-                        .frame(width: 46, height: 46)
+        return SettingsSelectableTile(
+            label: label,
+            isSelected: currentCursorAvatarStyle == style,
+            accent: accent,
+            action: { avatarStyleRawValue = style.storageValue }
+        ) {
+            ZStack {
+                RoundedRectangle(cornerRadius: DS.CornerRadius.extraLarge, style: .continuous)
+                    .fill(SettingsTheme.hover)
+                    .frame(width: 46, height: 46)
 
-                    switch style {
-                    case .triangleFilled:
-                        Triangle()
-                            .fill(accent)
-                            .frame(width: 19, height: 19)
-                            .rotationEffect(.degrees(-25))
-                            .shadow(color: accent.opacity(0.55), radius: 7)
-                    case .triangleOutline:
-                        Triangle()
-                            .stroke(accent, lineWidth: 2.2)
-                            .frame(width: 19, height: 19)
-                            .rotationEffect(.degrees(-25))
-                    case .pet:
-                        EmptyView()
-                    }
+                switch style {
+                case .triangleFilled:
+                    // The glow mirrors how the real cursor renders on
+                    // screen, so the preview stays honest.
+                    Triangle()
+                        .fill(accent)
+                        .frame(width: 19, height: 19)
+                        .rotationEffect(.degrees(-25))
+                        .shadow(color: accent.opacity(0.55), radius: 7)
+                case .triangleOutline:
+                    Triangle()
+                        .stroke(accent, lineWidth: 2.2)
+                        .frame(width: 19, height: 19)
+                        .rotationEffect(.degrees(-25))
+                case .pet:
+                    EmptyView()
                 }
-
-                Text(label)
-                    .font(.system(size: 11, weight: .medium))
-                    .lineLimit(1)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(isSelected ? accent.opacity(0.10) : Color.primary.opacity(0.04))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(isSelected ? accent.opacity(0.55) : Color.primary.opacity(0.07), lineWidth: isSelected ? 1.2 : 0.8)
-            )
         }
-        .buttonStyle(.plain)
     }
 
     private func cursorPetButton(_ pet: BlinkBuddyPet) -> some View {
         let style = BlinkCursorAvatarStyle.pet(id: pet.id)
-        let isSelected = currentCursorAvatarStyle == style
-        let accent = (BlinkAccentTheme(rawValue: selectedAccentThemeID) ?? .blue).cursorColor
 
-        return Button {
-            avatarStyleRawValue = style.storageValue
-        } label: {
-            VStack(spacing: 8) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(isSelected ? accent.opacity(0.16) : Color.primary.opacity(0.045))
-                        .frame(width: 46, height: 46)
-                    BlinkPetThumbnailView(pet: pet)
-                        .frame(width: 34, height: 36)
-                }
-
-                Text(pet.displayName)
-                    .font(.system(size: 11, weight: .medium))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
+        return SettingsSelectableTile(
+            label: pet.displayName,
+            isSelected: currentCursorAvatarStyle == style,
+            accent: settingsAccent,
+            action: { avatarStyleRawValue = style.storageValue }
+        ) {
+            ZStack {
+                RoundedRectangle(cornerRadius: DS.CornerRadius.extraLarge, style: .continuous)
+                    .fill(SettingsTheme.hover)
+                    .frame(width: 46, height: 46)
+                BlinkPetThumbnailView(pet: pet)
+                    .frame(width: 34, height: 36)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(isSelected ? accent.opacity(0.10) : Color.primary.opacity(0.04))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(isSelected ? accent.opacity(0.55) : Color.primary.opacity(0.07), lineWidth: isSelected ? 1.2 : 0.8)
-            )
         }
-        .buttonStyle(.plain)
         .help(pet.petDescription)
     }
 
@@ -2610,26 +2425,27 @@ struct BlinkSettingsView: View {
         VStack(spacing: 7) {
             Image(systemName: "pawprint")
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundColor(.secondary)
+                .foregroundColor(DS.Colors.textTertiary)
             Text("No pets")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.secondary)
+                .foregroundColor(DS.Colors.textTertiary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.primary.opacity(0.03))
+            RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
+                .fill(SettingsTheme.well.opacity(0.5))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.primary.opacity(0.07), style: StrokeStyle(lineWidth: 0.8, dash: [4, 3]))
+            RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
+                .stroke(SettingsTheme.rule, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
         )
     }
 
     private func rowIcon(_ systemImageName: String) -> some View {
         Image(systemName: systemImageName)
             .font(.system(size: 14, weight: .medium))
+            .foregroundColor(DS.Colors.textSecondary)
     }
 
     private func openFeedbackInbox() {
@@ -2668,18 +2484,19 @@ struct AgentParkingPositionPicker: View {
 
     private let dotSize: CGFloat = 18
     private let hitTargetSize: CGFloat = 36
-    private let outlineColor = Color.secondary.opacity(0.55)
-    private let selectedColor = Color.accentColor
+    private let outlineColor = SettingsTheme.ruleStrong
+    private let selectedColor = DS.Colors.overlayCursorBlue
     private let coordinateSpaceName = "AgentParkingPositionPreview"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Where agents park")
-                .font(.headline)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(DS.Colors.textPrimary)
 
             Text("Pick where the agent dock parks, or drag a dot to fine-tune the corner.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11))
+                .foregroundColor(DS.Colors.textSecondary)
 
             GeometryReader { proxy in
                 let frame = previewRect(in: proxy.size)
@@ -2759,8 +2576,8 @@ struct AgentParkingPositionPicker: View {
             .padding(.vertical, 6)
 
             Text(activeDragPosition == selection ? "\(selection.label) — drag to correct placement" : selection.label)
-                .font(.subheadline)
-                .foregroundStyle(.primary)
+                .font(.system(size: 11))
+                .foregroundColor(DS.Colors.textSecondary)
         }
     }
 
@@ -2857,5 +2674,298 @@ private struct ParkingCornerBracket: Shape {
         path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
         path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
         return path
+    }
+}
+
+// MARK: - Settings components
+
+private struct SettingsSidebarRow: View {
+    let title: String
+    let systemImageName: String
+    let accent: Color
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImageName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 20)
+                    .foregroundColor(isSelected ? accent : DS.Colors.textTertiary)
+                Text(title)
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .medium, design: .rounded))
+                    .foregroundColor(isSelected ? DS.Colors.textPrimary : DS.Colors.textSecondary)
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .background(
+                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                    .fill(isSelected ? SettingsTheme.hover : (isHovered ? SettingsTheme.well : Color.clear))
+            )
+            .contentShape(RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: DS.Animation.fast), value: isHovered)
+        .pointerCursor()
+    }
+}
+
+private struct SettingsActionRow: View {
+    let title: String
+    let systemImageName: String
+    var role: ButtonRole? = nil
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    private var isDestructive: Bool { role == .destructive }
+
+    var body: some View {
+        Button(role: role, action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImageName)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(isDestructive ? DS.Colors.destructiveText : DS.Colors.textSecondary)
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(isDestructive ? DS.Colors.destructiveText : DS.Colors.textPrimary)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DS.Colors.textTertiary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .background(isHovered ? SettingsTheme.well : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: DS.Animation.fast), value: isHovered)
+        .pointerCursor()
+    }
+}
+
+private struct SettingsOptionTile: View {
+    let title: String
+    let subtitle: String
+    let isSelected: Bool
+    let accent: Color
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    Text(subtitle)
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.Colors.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(accent)
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
+                    .fill(isSelected ? accent.opacity(0.12) : (isHovered ? SettingsTheme.hover : SettingsTheme.well))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
+                    .stroke(isSelected ? accent.opacity(0.55) : Color.clear, lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: DS.Animation.fast), value: isHovered)
+        .pointerCursor()
+    }
+}
+
+private struct SettingsSelectableTile<Preview: View>: View {
+    let label: String
+    let isSelected: Bool
+    let accent: Color
+    let action: () -> Void
+    @ViewBuilder let preview: () -> Preview
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                preview()
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
+                    .fill(isSelected ? accent.opacity(0.10) : (isHovered ? SettingsTheme.hover : SettingsTheme.well))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous)
+                    .stroke(isSelected ? accent.opacity(0.55) : Color.clear, lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: DS.CornerRadius.large, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: DS.Animation.fast), value: isHovered)
+        .pointerCursor()
+    }
+}
+
+private struct SettingsIconButton: View {
+    let systemImageName: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImageName)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(isHovered ? DS.Colors.textPrimary : DS.Colors.textTertiary)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(isHovered ? SettingsTheme.hover : Color.clear))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: DS.Animation.fast), value: isHovered)
+        .pointerCursor()
+    }
+}
+
+private struct SettingsTextField: View {
+    let placeholder: String
+    @Binding var text: String
+    var isSecure: Bool = false
+    var axis: Axis = .horizontal
+    var lineLimit: ClosedRange<Int>? = nil
+
+    @FocusState private var isFocused: Bool
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        field
+            .textFieldStyle(.plain)
+            .font(.system(size: 12))
+            .foregroundColor(isEnabled ? DS.Colors.textPrimary : DS.Colors.disabledText)
+            .focused($isFocused)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                    .fill(SettingsTheme.well)
+            )
+            .overlay(
+                // The focus ring appears instantly — never animated.
+                RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous)
+                    .stroke(
+                        isFocused ? BlinkAccentTheme.current.cursorColor : SettingsTheme.rule,
+                        lineWidth: isFocused ? 1.5 : 1
+                    )
+            )
+    }
+
+    @ViewBuilder
+    private var field: some View {
+        if isSecure {
+            SecureField(placeholder, text: $text)
+        } else if let lineLimit {
+            TextField(placeholder, text: $text, axis: axis)
+                .lineLimit(lineLimit)
+        } else {
+            TextField(placeholder, text: $text, axis: axis)
+        }
+    }
+}
+
+private struct SettingsPillButtonStyle: ButtonStyle {
+    enum Emphasis {
+        case filled
+        case soft
+        case destructive
+    }
+
+    var emphasis: Emphasis = .soft
+
+    @State private var isHovered = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .foregroundColor(labelColor)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(fillColor(isPressed: configuration.isPressed)))
+            .overlay(Capsule().stroke(strokeColor, lineWidth: 1))
+            .opacity(isEnabled ? 1 : 0.45)
+            .animation(.easeOut(duration: DS.Animation.fast), value: isHovered)
+            .animation(.easeOut(duration: DS.Animation.fast), value: configuration.isPressed)
+            .onHover { isHovered = isEnabled && $0 }
+            .pointerCursor(isEnabled: isEnabled)
+    }
+
+    private var labelColor: Color {
+        switch emphasis {
+        case .filled:
+            // The white accent theme needs dark text on its near-white fill.
+            return BlinkAccentTheme.current == .white ? SettingsTheme.canvas : DS.Colors.textOnAccent
+        case .soft:
+            return DS.Colors.textPrimary
+        case .destructive:
+            return DS.Colors.destructiveText
+        }
+    }
+
+    private func fillColor(isPressed: Bool) -> Color {
+        switch emphasis {
+        case .filled:
+            let theme = BlinkAccentTheme.current
+            if isPressed { return theme.accentHover.blendedWithWhite(fraction: DS.StateLayer.pressed) }
+            return isHovered ? theme.accentHover : theme.accent
+        case .soft:
+            if isPressed { return SettingsTheme.pressed }
+            return isHovered ? SettingsTheme.hover : SettingsTheme.well
+        case .destructive:
+            if isPressed { return DS.Colors.destructive.opacity(0.40) }
+            return DS.Colors.destructive.opacity(isHovered ? 0.30 : 0.12)
+        }
+    }
+
+    private var strokeColor: Color {
+        switch emphasis {
+        case .filled:
+            return Color.clear
+        case .soft:
+            return isHovered ? SettingsTheme.ruleStrong : SettingsTheme.rule
+        case .destructive:
+            return DS.Colors.destructive.opacity(isHovered ? 0.45 : 0.25)
+        }
     }
 }

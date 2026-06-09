@@ -100,8 +100,22 @@ cp -R "$SRC_APP" "$STAMP_DIR/Blink.app"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEXT" "$STAMP_DIR/Blink.app/Contents/Info.plist" \
   || die "failed to stamp build $NEXT onto the app copy."
 if [[ "${SIGN:-0}" != "1" ]]; then
-  codesign --force --deep --sign - "$STAMP_DIR/Blink.app" >/dev/null 2>&1 \
-    || warn "ad-hoc re-seal failed — the unsigned dmg may read as damaged on other Macs."
+  # Re-seal with the stable Apple Development cert, NOT ad-hoc. An ad-hoc
+  # signature's identity is a per-build hash, so macOS TCC treats every
+  # update as a new app and wipes Accessibility / Screen Recording / Mic /
+  # Full Disk Access grants. A certificate-anchored signature keeps the
+  # same identity across builds, so users grant permissions once and every
+  # later update inherits them. Pin by SHA-1 because the keychain also
+  # holds a revoked copy of the same-named cert.
+  RESEAL_IDENTITY="${RESEAL_IDENTITY:-B2013FCF5572628D956F05916938E0351C9EBB3A}"
+  if codesign --force --deep --timestamp --preserve-metadata=entitlements \
+       --sign "$RESEAL_IDENTITY" "$STAMP_DIR/Blink.app" >/dev/null 2>&1; then
+    say "Re-sealed with Apple Development cert — TCC permissions persist across updates."
+  else
+    warn "cert re-seal failed — falling back to ad-hoc (permissions will reset on update)."
+    codesign --force --deep --sign - "$STAMP_DIR/Blink.app" >/dev/null 2>&1 \
+      || warn "ad-hoc re-seal failed — the unsigned dmg may read as damaged on other Macs."
+  fi
 fi
 APP_PATH="$STAMP_DIR/Blink.app"
 
