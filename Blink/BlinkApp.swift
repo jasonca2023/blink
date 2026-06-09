@@ -46,6 +46,11 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDel
         print("Blink: Starting...")
         print("Blink: Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")")
 
+        // Brief launch flourish — a click-through splash that animates Blink's
+        // mark in and tears itself down. Non-blocking; the rest of setup runs
+        // underneath it.
+        BlinkStartupAnimationController.playOnLaunch()
+
         // Default in-app computer use ON so voice commands like "open
         // github.com" can drive the focused window without the user
         // having to flip a toggle in Settings on first launch. Also
