@@ -20,14 +20,14 @@
 # Env knobs:
 #   SIGN=1         sign + notarize the dmg (needs Developer ID + notary creds)
 #   NO_DEPLOY=1    build the dmg + appcast but don't deploy (dry run)
-#   SITE_BASE=...  public origin (default: https://website-jason-guo.vercel.app)
+#   SITE_BASE=...  public origin (default: https://blink-jason-guo.vercel.app)
 #
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
 OUT_DIR="$HERE/downloads"
-SITE_BASE="${SITE_BASE:-https://website-jason-guo.vercel.app}"
+SITE_BASE="${SITE_BASE:-https://blink-jason-guo.vercel.app}"
 APP_PATH="${1:-}"
 
 say() { printf '\033[1;34m▸\033[0m %s\n' "$*"; }

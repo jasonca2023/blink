@@ -45,7 +45,7 @@ Installed apps (which check daily) then download and self-install it.
   previously in `Info.plist` had no matching private key on this machine, so I
   generated a fresh one. `Blink/Info.plist` now carries the new `SUPublicEDKey`
   (`sA7Pp6…`) and the real feed URL
-  (`https://website-jason-guo.vercel.app/downloads/appcast.xml`). Any copy built
+  (`https://blink-jason-guo.vercel.app/downloads/appcast.xml`). Any copy built
   *before* this change (e.g. the build 6 currently on the site) can't verify the
   new signatures — so distribute the first new build manually (the website
   download), and everything after it updates itself.

@@ -2,7 +2,7 @@
 
 Blink is a native macOS menu-bar AI companion. Hold ctrl+option for voice push-to-talk, or double-tap ctrl for the text bar. Blink captures your screen, understands what you're looking at, replies in voice, and can drive the UI on your behalf — click buttons, open apps, run searches, fill in text — through the macOS Accessibility tree (no pixel guessing).
 
-**[Download Blink →](https://website-jason-guo.vercel.app)** — free, universal binary (Apple Silicon + Intel), macOS 14.2+. Bring your own API keys.
+**[Download Blink →](https://blink-jason-guo.vercel.app)** — free, universal binary (Apple Silicon + Intel), macOS 14.2+. Bring your own API keys. Installed copies auto-update in place via Sparkle, and updates keep your granted permissions.
 
 ## Features
 
@@ -15,7 +15,7 @@ Blink is a native macOS menu-bar AI companion. Hold ctrl+option for voice push-t
 - **Cross-session memory.** Blink embeds each exchange and recalls relevant past conversations on later launches, scoped to the app you're focused on — so "what's my dog's name" still works tomorrow. Serverless and on-device: no setup, just an OpenAI or Hugging Face key for the embeddings.
 - **Agent Mode.** Send Blink longer jobs — research, refactors, file work, settings tweaks — and it runs them in the background through a bundled Codex runtime without taking the screen.
 - **Pluggable transcription.** Apple Speech (local), AssemblyAI, Deepgram, OpenAI Whisper, or Mistral Voxtral via the HuggingFace router. Picked from Settings → Voice.
-- **Apple Liquid Glass throughout.** Every panel, overlay, and card uses translucent system materials. No dark gradients.
+- **Apple Liquid Glass surfaces.** The floating panel, overlay, and cards use translucent system materials; the settings window uses a flat graphite dark theme. No dark gradients.
 - **Local-only.** API keys live in `~/.config/blink/secrets.env`. Nothing ships through a hosted proxy. A local control bridge at `127.0.0.1:32123` lets other trusted local apps drive the overlay, screenshots, captions, and TTS.
 
 ## Requirements
