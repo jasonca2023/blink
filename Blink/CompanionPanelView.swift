@@ -1459,7 +1459,7 @@ struct CompanionPanelView: View {
     }
 
     private static func openFeedbackInbox() {
-        guard let url = URL(string: "https://github.com/blink/blink/issues") else {
+        guard let url = URL(string: "https://github.com/jasonca2023/blink/issues") else {
             return
         }
         NSWorkspace.shared.open(url)

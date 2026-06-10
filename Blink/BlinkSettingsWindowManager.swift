@@ -2449,7 +2449,7 @@ struct BlinkSettingsView: View {
     }
 
     private func openFeedbackInbox() {
-        guard let url = URL(string: "https://github.com/blink/blink/issues") else { return }
+        guard let url = URL(string: "https://github.com/jasonca2023/blink/issues") else { return }
         NSWorkspace.shared.open(url)
     }
 
