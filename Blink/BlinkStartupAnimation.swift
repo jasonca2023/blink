@@ -238,19 +238,22 @@ private struct BlinkStartupView: View {
         // Darken the screen.
         withAnimation(SplashMotion.easeOut(0.5)) { canvasOpacity = 1 }
 
-        // The ring draws itself on — slow, deliberate, decelerating into place.
-        at(0.6) { withAnimation(SplashMotion.easeOut(1.3)) { drawProgress = 1 } }
+        // The ring draws itself on. Near-linear with soft ends, NOT the
+        // exponential ease-out: that curve covers ~85% of the sweep in the
+        // first half-second, which makes the draw read as instant and bunches
+        // the whole spark shower into one early burst.
+        at(0.6) { withAnimation(.timingCurve(0.33, 0, 0.25, 1, duration: 2.4)) { drawProgress = 1 } }
 
         // The wordmark + tagline fade in beneath it (fade only — no slide).
-        at(1.9) { withAnimation(SplashMotion.easeOut(0.6)) { wordmarkOpacity = 1 } }
+        at(2.9) { withAnimation(SplashMotion.easeOut(0.6)) { wordmarkOpacity = 1 } }
 
         // Once drawn, the pupil starts breathing.
-        at(2.0) { isPulsing = true }
+        at(3.1) { isPulsing = true }
 
         // Hold through a couple of breaths, then fade the mark out and hand off
         // to the tour (exit accelerates). The dark backdrop stays.
-        at(4.4) { withAnimation(SplashMotion.easeIn(0.5)) { introOpacity = 0 } }
-        at(5.0) { beginTour() }
+        at(5.6) { withAnimation(SplashMotion.easeIn(0.5)) { introOpacity = 0 } }
+        at(6.2) { beginTour() }
     }
 
     /// After the intro mark fades: on first launch, hand off to the tour; on
@@ -411,13 +414,26 @@ private struct BlinkStartupTour: View {
 /// set the pupil dilates and contracts on the same 1.6s breath cycle the real
 /// overlay uses. There's no live audio at launch, so the pupil breathes on its
 /// own instead of reacting to amplitude.
-private struct BlinkListeningIndicator: View {
+private struct BlinkListeningIndicator: View, Animatable {
     var drawProgress: CGFloat
     var isPulsing: Bool
     let color: Color
 
+    // Animating drawProgress per-frame (not just letting the trim interpolate
+    // internally) so the spark layer can track the ring's leading tip.
+    var animatableData: CGFloat {
+        get { drawProgress }
+        set { drawProgress = newValue }
+    }
+
     var body: some View {
         ZStack {
+            // Sparks shed from the tip while the ring draws itself on. Behind
+            // the ring so the stroke's leading edge stays crisp.
+            BlinkDrawSparks(progress: drawProgress, color: color)
+                .frame(width: 360, height: 360)
+                .allowsHitTesting(false)
+
             // Ring: animated by the parent from 0 → full, starting at the top.
             Circle()
                 .trim(from: 0, to: drawProgress)
@@ -452,5 +468,116 @@ private struct BlinkListeningIndicator: View {
             .opacity(Double(min(max((drawProgress - 0.6) / 0.4, 0), 1)))
         }
         .frame(width: 150, height: 150)
+    }
+}
+
+/// Sparks shed from the ring's leading tip while it draws on. Each spark's
+/// whole flight is a pure function of `progress` — born when the tip passes
+/// its seed point, it drifts outward and fades over the next slice of the
+/// draw — so the layer needs no clock and no state. Reduce Motion sets
+/// drawProgress straight to 1, which lands every spark past its lifetime and
+/// the layer renders nothing.
+private struct BlinkDrawSparks: View {
+    var progress: CGFloat
+    let color: Color
+
+    private struct Spark {
+        let birth: CGFloat   // drawProgress at which the tip sheds it
+        let life: CGFloat    // progress-span of its flight
+        let drift: CGFloat   // radial travel in points (negative = inward)
+        let sway: CGFloat    // tangential drift in radians
+        let size: CGFloat
+    }
+
+    // Seeded LCG so the shower is identical every launch (and across the
+    // per-frame body re-evaluations that Animatable drives).
+    private static let sparks: [Spark] = {
+        var state: UInt64 = 0x51_1A_5EED
+        func rand(_ range: ClosedRange<CGFloat>) -> CGFloat {
+            state = state &* 6364136223846793005 &+ 1442695040888963407
+            let unit = CGFloat(state >> 11) / CGFloat(UInt64(1) << 53)
+            return range.lowerBound + unit * (range.upperBound - range.lowerBound)
+        }
+        return (0..<1100).map { _ in
+            let birth = rand(0.03...0.92)
+            return Spark(
+                birth: birth,
+                // Clamp so every spark finishes inside the draw — otherwise a
+                // spark born late freezes mid-flight when progress stops at 1.
+                life: min(rand(0.16...0.34), 0.985 - birth),
+                // Scatter both ways off the ring: inward toward the pupil as
+                // well as outward, so the shower fills the circle rather than
+                // only haloing it.
+                drift: rand(-65...90),
+                sway: rand(-0.6...0.6),
+                size: rand(2.0...4.6)
+            )
+        }
+    }()
+
+    // How many opacity levels the per-spark fade quantizes to (one Shape
+    // layer per level). At 3pt dots the stepping between levels is invisible.
+    private static let opacityBuckets = 5
+
+    /// All sparks at one opacity level, drawn as a single path. NOT Canvas
+    /// (renders nothing on Intel — RenderBox's shader archive has no Intel-GPU
+    /// slice) and NOT one view per spark (hundreds of view nodes diffed and
+    /// composited every frame stutters on Intel iGPUs). A Shape rebuilds one
+    /// path per frame and composites as a single layer, so the whole field
+    /// costs ~10 layers regardless of spark count.
+    private struct FieldShape: Shape {
+        var progress: CGFloat
+        let bucket: Int
+
+        var animatableData: CGFloat {
+            get { progress }
+            set { progress = newValue }
+        }
+
+        func path(in rect: CGRect) -> Path {
+            var path = Path()
+            let center = CGPoint(x: rect.midX, y: rect.midY)
+            let ringRadius: CGFloat = 75
+            for spark in BlinkDrawSparks.sparks {
+                let age = (progress - spark.birth) / spark.life
+                guard age > 0, age < 1 else { continue }
+                let alpha = age < 0.25 ? age / 0.25 : 1 - (age - 0.25) / 0.75
+                let level = min(BlinkDrawSparks.opacityBuckets - 1,
+                                Int(alpha * CGFloat(BlinkDrawSparks.opacityBuckets)))
+                guard level == bucket else { continue }
+                let flight = 1 - pow(1 - age, 2) // decelerate outward (ease-out)
+                // Trim starts at the top and runs clockwise (the ring is
+                // rotated -90°), so the shed angle tracks the tip.
+                let angle = -CGFloat.pi / 2 + spark.birth * 2 * .pi + spark.sway * flight
+                let r = ringRadius + spark.drift * flight
+                let d = spark.size * (1 - 0.35 * flight)
+                path.addEllipse(in: CGRect(
+                    x: center.x + cos(angle) * r - d / 2,
+                    y: center.y + sin(angle) * r - d / 2,
+                    width: d,
+                    height: d
+                ))
+            }
+            return path
+        }
+    }
+
+    private var field: some View {
+        ZStack {
+            ForEach(0..<Self.opacityBuckets, id: \.self) { bucket in
+                FieldShape(progress: progress, bucket: bucket)
+                    .fill(color)
+                    .opacity((Double(bucket) + 0.5) / Double(Self.opacityBuckets))
+            }
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            // One shared blur over the whole field stands in for the
+            // per-spark glow at a fixed cost.
+            field.blur(radius: 3).opacity(0.85)
+            field
+        }
     }
 }
