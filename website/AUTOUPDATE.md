@@ -41,14 +41,16 @@ Installed apps (which check daily) then download and self-install it.
 
 ## Two one-time facts
 
-- **Auto-update starts from your *next* build.** The keypair whose public key was
-  previously in `Info.plist` had no matching private key on this machine, so I
-  generated a fresh one. `Blink/Info.plist` now carries the new `SUPublicEDKey`
-  (`sA7Pp6…`) and the real feed URL
+- **Auto-update continuity resets on 2026-06-15.** The previous key (`sA7Pp6…`,
+  used through build 7) went missing from this machine's login keychain with no
+  offline backup, so I generated a fresh keypair. `Blink/Info.plist` now carries
+  the new `SUPublicEDKey` (`h3WpgK…`) and the real feed URL
   (`https://blink-jason-guo.vercel.app/downloads/appcast.xml`). Any copy built
-  *before* this change (e.g. the build 6 currently on the site) can't verify the
-  new signatures — so distribute the first new build manually (the website
-  download), and everything after it updates itself.
+  *before* this change (i.e. anyone on builds 1–7) can't verify the new
+  signatures — so they must download the first new build manually (the website
+  download) once; everything after it updates itself. **The private key is now
+  backed up at `~/blink_sparkle_private_key.txt` — move it offline and never let
+  this happen again.**
 - **First signing shows a keychain prompt.** The Sparkle private key lives in
   your login keychain. The first time `publish.sh` signs an appcast, macOS asks
   to allow access — click **Always Allow**. Back it up once and keep it safe:

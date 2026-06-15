@@ -41,7 +41,7 @@
 	<key>SUFeedURL</key>
 	<string>https://blink-jason-guo.vercel.app/downloads/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string>sA7Pp6GxFmtjJQYv9kh58LuTdoIlBoBoqocxK4DYliw=</string>
+	<string>h3WpgKesOYInzfOZETgJ+GNTOIOOwOHKnCyqbQ4DVvw=</string>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 	<key>VoiceTranscriptionProvider</key>
