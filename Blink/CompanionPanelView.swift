@@ -1335,6 +1335,7 @@ struct CompanionPanelView: View {
                     footerIconButton(
                         systemImageName: "sparkles.rectangle.stack",
                         helpText: "Show Blink tour",
+                        isAccented: true,
                         action: { companionManager.showSlideshow() }
                     )
 
@@ -1373,21 +1374,18 @@ struct CompanionPanelView: View {
         systemImageName: String,
         helpText: String,
         isActive: Bool = false,
+        isAccented: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemImageName)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(isActive ? DS.Colors.textOnAccent : DS.Colors.textTertiary)
-                .frame(width: 22, height: 22)
-                .background(
-                    Circle()
-                        .fill(isActive ? DS.Colors.accent : Color.white.opacity(0.08))
-                )
         }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .help(helpText)
+        .dsIconButtonStyle(
+            size: 22,
+            isAccented: isAccented,
+            tooltip: helpText,
+            tooltipAlignment: .center
+        )
     }
 
     // MARK: - Footer

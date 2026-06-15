@@ -6,6 +6,11 @@
 //  surface. Hosted in a borderless floating window so it overlays
 //  the rest of the desktop on demand.
 //
+//  Hallmark · component: tour-card · genre: atmospheric · theme: custom (Blink Dusk)
+//  accent: DS.Colors.accent (blue 600 default, user-configurable) · paper: DS.Colors.background
+//  icon: ring motif (1.5 pt stroke, 7 % fill) — matches BlinkListeningIndicator ring language
+//  blooms: two fixed (top-centre primary + bottom-trailing dim) · reduced-motion: opacity-only
+//
 
 import SwiftUI
 import AppKit
@@ -51,9 +56,9 @@ enum BlinkSlideshowDeck {
             symbolHue: .accent
         ),
         BlinkSlide(
-            title: "Knows your design tools.",
-            body: "Blink ships with built-in knowledge for Onshape, Blender, Photoshop, Illustrator, and Figma. Ask 'how do I extrude this' in Onshape and Blink answers from its app-aware knowledge base, not just generic web facts.",
-            symbolName: "cube.transparent",
+            title: "Speaks back to you.",
+            body: "Blink reads its replies aloud using your choice of voice service — OpenAI, ElevenLabs, Deepgram, or Cartesia. Pick a voice in settings, or turn TTS off entirely. Voice is optional and switches without a restart.",
+            symbolName: "speaker.wave.3.fill",
             symbolHue: .accent
         ),
         BlinkSlide(
@@ -63,14 +68,14 @@ enum BlinkSlideshowDeck {
             symbolHue: .accent
         ),
         BlinkSlide(
-            title: "Liquid glass everywhere.",
-            body: "Every panel, overlay, and card uses Apple Liquid Glass materials. No dark gradients, no heavy chrome — just a translucent surface that picks up the wallpaper underneath.",
-            symbolName: "sparkles",
+            title: "Answers close to you.",
+            body: "Blink drops its reply as a compact card beside your cursor — no app-switching, no modal dialogs, no dock bounce. Read it, dismiss it, or let it fade. Your focus stays on what you were doing.",
+            symbolName: "bubble.left.fill",
             symbolHue: .accent
         ),
         BlinkSlide(
             title: "Your keys stay local.",
-            body: "Blink talks directly to the APIs you choose — Anthropic, OpenAI, ElevenLabs, AssemblyAI. Keys live in your keychain and on disk only. No proxy, no relay, no hosted account.",
+            body: "Blink talks directly to the APIs you configure — Anthropic, OpenAI, ElevenLabs, Deepgram, or AssemblyAI. Keys live in your keychain and on disk only. No proxy, no relay, no hosted account required.",
             symbolName: "lock.shield.fill",
             symbolHue: .mono
         ),
@@ -87,7 +92,7 @@ struct BlinkSlideshowView: View {
 
     init(
         slides: [BlinkSlide] = BlinkSlideshowDeck.slides,
-        accent: Color = Color(hex: "#7AF7B7"),
+        accent: Color = DS.Colors.accent,
         onClose: @escaping () -> Void
     ) {
         self.slides = slides
@@ -98,7 +103,7 @@ struct BlinkSlideshowView: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             background
-            content
+            contentStack
             closeButton
         }
         .frame(width: 720, height: 460)
@@ -111,56 +116,127 @@ struct BlinkSlideshowView: View {
         .onKeyPress(.escape)     { onClose(); return .handled }
     }
 
+    // MARK: - Background
+
     private var background: some View {
-        RoundedRectangle(cornerRadius: 22, style: .continuous)
-            .fill(.thickMaterial)
-            .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 0.6)
+        ZStack {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(DS.Colors.background)
+
+            // Primary bloom — top-centre, shifts hue with the slide (atmospheric rule: bloom 1)
+            RadialGradient(
+                gradient: Gradient(colors: [
+                    currentSlide.symbolHue.color(accent: accent).opacity(0.11),
+                    Color.clear
+                ]),
+                center: UnitPoint(x: 0.5, y: 0.06),
+                startRadius: 0,
+                endRadius: 300
             )
-            .shadow(color: Color.black.opacity(0.22), radius: 24, x: 0, y: 12)
+            .animation(DS.Animation.blinkSpringSettle, value: index)
+
+            // Secondary dim bloom — bottom-trailing, fixed, purely for depth (bloom 2 of 2 max)
+            RadialGradient(
+                gradient: Gradient(colors: [
+                    DS.Colors.accent.opacity(0.05),
+                    Color.clear
+                ]),
+                center: UnitPoint(x: 0.88, y: 0.94),
+                startRadius: 0,
+                endRadius: 160
+            )
+
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(DS.Colors.borderSubtle, lineWidth: 0.6)
+        }
+        .shadow(color: .black.opacity(0.40), radius: 36, x: 0, y: 18)
     }
 
-    @ViewBuilder
-    private var content: some View {
-        let slide = currentSlide
-        VStack(spacing: 24) {
-            Spacer().frame(height: 14)
-            Image(systemName: slide.symbolName)
-                .font(.system(size: 56, weight: .regular))
-                .foregroundColor(slide.symbolHue.color(accent: accent))
-                .frame(width: 96, height: 96)
-                .background(
-                    Circle().fill(slide.symbolHue.color(accent: accent).opacity(0.12))
-                )
+    // MARK: - Content
 
-            VStack(spacing: 14) {
-                Text(slide.title)
-                    .font(.system(size: 26, weight: .semibold))
-                    .multilineTextAlignment(.center)
-                    .foregroundColor(Color.primary)
+    private var contentStack: some View {
+        VStack(spacing: 0) {
+            slideArea
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.horizontal, 48)
+                .padding(.top, 36)
+                .padding(.bottom, 24)
 
-                Text(slide.body)
-                    .font(.system(size: 14, weight: .regular))
-                    .multilineTextAlignment(.center)
-                    .foregroundColor(Color.primary.opacity(0.78))
-                    .lineSpacing(4)
-                    .frame(maxWidth: 520)
-            }
-
-            Spacer()
+            DS.Colors.borderSubtle.frame(height: 0.6)
 
             controls
-                .padding(.bottom, 22)
+                .padding(.horizontal, 32)
+                .padding(.vertical, 16)
         }
-        .padding(.horizontal, 36)
-        .padding(.top, 22)
     }
 
+    private var slideArea: some View {
+        let slide = currentSlide
+        return VStack(spacing: 22) {
+            iconView(slide: slide)
+            textView(slide: slide)
+        }
+        .id(index)
+        .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .center)))
+        .animation(.easeOut(duration: 0.22), value: index)
+    }
+
+    private func iconView(slide: BlinkSlide) -> some View {
+        let hueColor = slide.symbolHue.color(accent: accent)
+        return ZStack {
+            // Outer glow bloom — atmospheric depth
+            Circle()
+                .fill(
+                    RadialGradient(
+                        gradient: Gradient(colors: [hueColor.opacity(0.18), Color.clear]),
+                        center: .center,
+                        startRadius: 0,
+                        endRadius: 80
+                    )
+                )
+                .frame(width: 160, height: 160)
+
+            // Ring motif — same visual language as BlinkListeningIndicator's drawn-on ring:
+            // emphasis on the stroke (1.5 pt), minimal fill (7 %), no heavy filled circle.
+            ZStack {
+                Circle()
+                    .fill(hueColor.opacity(0.07))
+                Circle()
+                    .stroke(hueColor.opacity(0.45), lineWidth: 1.5)
+            }
+            .frame(width: 86, height: 86)
+
+            Image(systemName: slide.symbolName)
+                .font(.system(size: 32, weight: .medium))
+                .foregroundColor(hueColor)
+        }
+    }
+
+    private func textView(slide: BlinkSlide) -> some View {
+        VStack(spacing: 11) {
+            Text(slide.title)
+                .font(DS.Typography.heading(25))
+                .tracking(-0.3)
+                .multilineTextAlignment(.center)
+                .foregroundColor(DS.Colors.textPrimary)
+
+            Text(slide.body)
+                .font(.system(size: 13.5, weight: .regular))
+                .multilineTextAlignment(.center)
+                .foregroundColor(DS.Colors.textSecondary)
+                .lineSpacing(3.5)
+                .frame(maxWidth: 500)
+        }
+    }
+
+    // MARK: - Controls
+
     private var controls: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: 12) {
             navButton(symbol: "chevron.left", disabled: index == 0, action: goPrev)
+            Spacer()
             dots
+            Spacer()
             navButton(symbol: "chevron.right", disabled: index == slides.count - 1, action: goNext)
         }
     }
@@ -168,48 +244,46 @@ struct BlinkSlideshowView: View {
     private func navButton(symbol: String, disabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(disabled ? Color.primary.opacity(0.35) : Color.primary.opacity(0.85))
-                .frame(width: 30, height: 30)
-                .background(
-                    Circle().fill(Color.white.opacity(disabled ? 0.06 : 0.12))
-                )
-                .overlay(
-                    Circle().stroke(Color.white.opacity(0.18), lineWidth: 0.6)
-                )
         }
-        .buttonStyle(.plain)
+        .dsIconButtonStyle(size: 30)
         .disabled(disabled)
+        .opacity(disabled ? 0.28 : 1.0)
+        .animation(.easeOut(duration: DS.Animation.fast), value: disabled)
     }
 
     private var dots: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 7) {
             ForEach(0..<slides.count, id: \.self) { i in
-                Capsule()
-                    .fill(i == index ? accent : Color.primary.opacity(0.22))
-                    .frame(width: i == index ? 22 : 8, height: 8)
-                    .animation(.easeOut(duration: 0.22), value: index)
-                    .onTapGesture { index = i }
+                let isActive = i == index
+                ZStack {
+                    if isActive {
+                        Capsule()
+                            .fill(accent.opacity(0.28))
+                            .frame(width: 26, height: 8)
+                            .blur(radius: 3)
+                    }
+                    Capsule()
+                        .fill(isActive ? accent : DS.Colors.borderStrong)
+                        .frame(width: isActive ? 22 : 7, height: 7)
+                }
+                .animation(DS.Animation.blinkSpring, value: index)
+                .onTapGesture { navigate(to: i) }
+                .pointerCursor()
             }
         }
     }
 
+    // MARK: - Close
+
     private var closeButton: some View {
         Button(action: onClose) {
             Image(systemName: "xmark")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(Color.primary.opacity(0.85))
-                .frame(width: 26, height: 26)
-                .background(
-                    Circle().fill(Color.white.opacity(0.12))
-                )
-                .overlay(
-                    Circle().stroke(Color.white.opacity(0.18), lineWidth: 0.6)
-                )
         }
-        .buttonStyle(.plain)
-        .padding(14)
+        .dsIconButtonStyle(size: 26, isDestructiveOnHover: true, tooltip: "Close", tooltipAlignment: .trailing)
+        .padding(12)
     }
+
+    // MARK: - Helpers
 
     private var currentSlide: BlinkSlide {
         slides[max(0, min(index, slides.count - 1))]
@@ -217,12 +291,16 @@ struct BlinkSlideshowView: View {
 
     private func goNext() {
         guard index < slides.count - 1 else { return }
-        index += 1
+        withAnimation(DS.Animation.blinkSpring) { index += 1 }
     }
 
     private func goPrev() {
         guard index > 0 else { return }
-        index -= 1
+        withAnimation(DS.Animation.blinkSpring) { index -= 1 }
+    }
+
+    private func navigate(to i: Int) {
+        withAnimation(DS.Animation.blinkSpring) { index = i }
     }
 }
 

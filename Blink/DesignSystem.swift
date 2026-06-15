@@ -724,6 +724,9 @@ struct DSDestructiveButtonStyle: ButtonStyle {
 struct DSIconButtonStyle: ButtonStyle {
     var size: CGFloat = 28
     var isDestructiveOnHover: Bool = false
+    /// Accent-tinted variant for feature-discovery / tour actions.
+    /// Rests on `accentSubtle` + `accentText` icon; fills with `accent` on hover.
+    var isAccented: Bool = false
     var tooltipText: String? = nil
 
     /// Controls horizontal alignment of the tooltip relative to the button.
@@ -825,6 +828,9 @@ struct DSIconButtonStyle: ButtonStyle {
     }
 
     private func iconColor(isPressed: Bool) -> Color {
+        if isAccented {
+            return (isHovered || isPressed) ? .white : DS.Colors.accentText
+        }
         if isDestructiveOnHover && (isHovered || isPressed) {
             return .white
         }
@@ -838,6 +844,11 @@ struct DSIconButtonStyle: ButtonStyle {
     }
 
     private func circleBackgroundColor(isPressed: Bool) -> Color {
+        if isAccented {
+            if isPressed { return DS.Colors.accent.opacity(0.65) }
+            if isHovered { return DS.Colors.accent.opacity(0.45) }
+            return DS.Colors.accentSubtle
+        }
         if isDestructiveOnHover {
             if isPressed {
                 return DS.Colors.destructive.opacity(0.40)
@@ -857,6 +868,9 @@ struct DSIconButtonStyle: ButtonStyle {
     }
 
     private func circleBorderColor(isPressed: Bool) -> Color {
+        if isAccented {
+            return DS.Colors.accent.opacity((isHovered || isPressed) ? 0.55 : 0.28)
+        }
         if isDestructiveOnHover && (isHovered || isPressed) {
             return DS.Colors.destructive.opacity(0.30)
         }
@@ -904,8 +918,9 @@ extension View {
     /// Applies the icon-only button style (compact circle).
     /// `tooltipAlignment` controls where the tooltip sits horizontally relative to the button:
     /// `.leading` for left-edge buttons, `.trailing` for right-edge buttons, `.center` for middle.
-    func dsIconButtonStyle(size: CGFloat = 28, isDestructiveOnHover: Bool = false, tooltip: String? = nil, tooltipAlignment: Alignment = .center) -> some View {
-        self.buttonStyle(DSIconButtonStyle(size: size, isDestructiveOnHover: isDestructiveOnHover, tooltipText: tooltip, tooltipAlignment: tooltipAlignment))
+    /// Pass `isAccented: true` for feature-discovery / tour buttons to get the accent-tinted treatment.
+    func dsIconButtonStyle(size: CGFloat = 28, isDestructiveOnHover: Bool = false, isAccented: Bool = false, tooltip: String? = nil, tooltipAlignment: Alignment = .center) -> some View {
+        self.buttonStyle(DSIconButtonStyle(size: size, isDestructiveOnHover: isDestructiveOnHover, isAccented: isAccented, tooltipText: tooltip, tooltipAlignment: tooltipAlignment))
     }
 
     /// Attaches the shared pointing-hand cursor treatment used across interactive controls.
