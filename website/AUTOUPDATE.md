@@ -41,16 +41,19 @@ Installed apps (which check daily) then download and self-install it.
 
 ## Two one-time facts
 
-- **Auto-update continuity resets on 2026-06-15.** The previous key (`sA7Pp6…`,
-  used through build 7) went missing from this machine's login keychain with no
-  offline backup, so I generated a fresh keypair. `Blink/Info.plist` now carries
-  the new `SUPublicEDKey` (`h3WpgK…`) and the real feed URL
-  (`https://blink-jason-guo.vercel.app/downloads/appcast.xml`). Any copy built
-  *before* this change (i.e. anyone on builds 1–7) can't verify the new
-  signatures — so they must download the first new build manually (the website
-  download) once; everything after it updates itself. **The private key is now
-  backed up at `~/blink_sparkle_private_key.txt` — move it offline and never let
-  this happen again.**
+- **Auto-update continuity reset on 2026-06-15 at build 14.** The previous key
+  (`sA7Pp6…`, used through the **build 13** that was live on the site) existed
+  only in the keychain of the laptop it was generated on, and did not migrate
+  when machines changed — it was unrecoverable from any available Mac or backup.
+  So a fresh keypair was generated and `Blink/Info.plist` now carries the new
+  `SUPublicEDKey` (`h3WpgK…`) with the real feed URL
+  (`https://blink-jason-guo.vercel.app/downloads/appcast.xml`). **Build 14 is the
+  first build signed with the new key.** Every existing install (anyone on build
+  ≤13, all on the old key) can't verify the new signatures, so they must download
+  build 14 manually once from the website; everything after that updates itself.
+  **The new private key is backed up on paper — also store it in a password
+  manager and keep a copy on every machine you publish from, so a single-keychain
+  loss can't happen again.**
 - **First signing shows a keychain prompt.** The Sparkle private key lives in
   your login keychain. The first time `publish.sh` signs an appcast, macOS asks
   to allow access — click **Always Allow**. Back it up once and keep it safe:
