@@ -589,8 +589,15 @@ private struct HTTPRequest {
         }
 
         let bodyStart = headerRange.upperBound
-        let contentLength = Int(headers["content-length"] ?? "0") ?? 0
-        guard data.count >= bodyStart + contentLength else { return nil }
+        // Validate the client-supplied Content-Length before using it as a range
+        // bound: a negative value would make `bodyStart..<bodyStart + contentLength`
+        // invert (lowerBound > upperBound → trap), and a near-Int.max value would
+        // overflow the `bodyStart + contentLength` addition (also a trap). Either
+        // would crash the in-process bridge from a single malformed local request.
+        guard let contentLength = Int(headers["content-length"] ?? "0"),
+              contentLength >= 0,
+              contentLength <= 512 * 1024,
+              data.count >= bodyStart + contentLength else { return nil }
         self.method = parts[0].uppercased()
         self.path = URLComponents(string: parts[1])?.path ?? parts[1]
         self.headers = headers

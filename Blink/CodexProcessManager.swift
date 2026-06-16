@@ -238,7 +238,12 @@ final class CodexProcessManager: @unchecked Sendable {
 
     private func writeLine(_ line: String) {
         guard let data = line.data(using: .utf8) else { return }
-        inputPipe?.fileHandleForWriting.write(data)
+        // Use the throwing write API: if the codex app-server has exited since the
+        // `isRunning` check (the pipe's read end is gone), the legacy `write(_:)`
+        // raises an uncatchable Objective-C exception on EPIPE and crashes the app.
+        // `write(contentsOf:)` surfaces the failure as a Swift error we can swallow;
+        // the pending request will be failed by the terminationHandler instead.
+        try? inputPipe?.fileHandleForWriting.write(contentsOf: data)
     }
 
     private func consumeStdout(_ data: Data) {

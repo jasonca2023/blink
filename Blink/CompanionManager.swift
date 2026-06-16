@@ -237,7 +237,6 @@ final class CompanionManager: ObservableObject {
     @Published var onboardingVideoPlayer: AVPlayer?
     @Published var showOnboardingVideo: Bool = false
     @Published var onboardingVideoOpacity: Double = 0.0
-    private var onboardingVideoEndObserver: NSObjectProtocol?
     private var onboardingDemoTimeObserver: Any?
 
     // MARK: - Onboarding Prompt Bubble
@@ -12334,10 +12333,6 @@ final class CompanionManager: ObservableObject {
         }
         onboardingVideoPlayer?.pause()
         onboardingVideoPlayer = nil
-        if let observer = onboardingVideoEndObserver {
-            NotificationCenter.default.removeObserver(observer)
-            onboardingVideoEndObserver = nil
-        }
     }
 
     private func startOnboardingPromptStream() {
