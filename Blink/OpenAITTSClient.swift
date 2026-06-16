@@ -134,6 +134,12 @@ final class OpenAITTSClient: NSObject, BlinkTTSClient {
         currentPlayer?.stop()
         currentPlayer = nil
         playerDelegateBridge.flushTokens()
+        // Resume any in-flight speakText(waitUntilFinished:) awaits. Stopping the
+        // player does not fire audioPlayerDidFinishPlaying, so without this their
+        // continuations would leak and the callers would hang forever.
+        let pending = Array(continuations.values)
+        continuations.removeAll()
+        for continuation in pending { continuation.resume() }
     }
 
     fileprivate func playerDidFinish() {

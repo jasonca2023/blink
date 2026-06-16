@@ -108,11 +108,6 @@ final class BlinkBuddyPet: Identifiable, Equatable {
         frames[.idle]?.first ?? frames.values.first?.first
     }
 
-    func frame(row: BlinkBuddyAnimationRow, index: Int) -> CGImage? {
-        guard let row = frames[row] else { return nil }
-        guard !row.isEmpty else { return nil }
-        return row[index % row.count]
-    }
 }
 
 // MARK: - Loader
