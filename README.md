@@ -4,6 +4,8 @@ Blink is a native macOS menu-bar AI companion. Hold ctrl+option for voice push-t
 
 **[Download Blink →](https://blink-jason-guo.vercel.app)** — free, universal binary (Apple Silicon + Intel), macOS 14.2+. Bring your own API keys. Installed copies auto-update in place via Sparkle, and updates keep your granted permissions.
 
+> **First launch (one-time).** Blink is code-signed but **not notarized** (notarization needs a paid Apple Developer account), so macOS Gatekeeper blocks the very first open. To clear it once: open Terminal and run `xattr -dr com.apple.quarantine /Applications/Blink.app`, then open Blink normally. GUI alternative: right-click Blink → Open; if only "Move to Trash" appears, go to System Settings → Privacy & Security → "Open Anyway". You only do this once — Sparkle auto-updates install in place and won't re-trigger it.
+
 > **Already running Blink (build 13 or earlier)?** Builds before 14 were signed with a previous update key, so they can't verify the current one and **won't auto-update to build 14**. Download build 14 manually once from the link above — after that, in-place auto-update resumes normally. This is a one-time step and applies only to existing installs.
 
 ## Features
