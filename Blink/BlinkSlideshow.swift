@@ -56,6 +56,12 @@ enum BlinkSlideshowDeck {
             symbolHue: .accent
         ),
         BlinkSlide(
+            title: "Knows your creative tools.",
+            body: "When you're in Onshape, Blender, Photoshop, Illustrator, or Figma, Blink answers how-to questions from a built-in, app-aware knowledge base. Ask 'how do I extrude this' and it draws on real app knowledge — not just generic web facts — recognizing the focused app even in a browser tab.",
+            symbolName: "pencil.and.ruler.fill",
+            symbolHue: .accent
+        ),
+        BlinkSlide(
             title: "Speaks back to you.",
             body: "Blink reads its replies aloud using your choice of voice service — OpenAI, ElevenLabs, Deepgram, or Cartesia. Pick a voice in settings, or turn TTS off entirely. Voice is optional and switches without a restart.",
             symbolName: "speaker.wave.3.fill",
