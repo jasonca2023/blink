@@ -1819,8 +1819,11 @@ final class MicrosoftEdgeTTSClient: BlinkTTSClient {
         let headerLength = (Int(data[data.startIndex]) << 8) | Int(data[data.index(after: data.startIndex)])
         guard headerLength > 0, headerLength <= data.count else { return (nil, Data()) }
         let headerData = data.prefix(headerLength)
-        let payloadStart = min(data.count, headerLength + 2)
-        let payload = data.suffix(from: payloadStart)
+        // Count-based drop (clamps to empty if it exceeds the length) rather than
+        // the index-based `suffix(from:)`, which traps when `data` is a non-zero-
+        // based slice and the offset falls below its startIndex. Same result for a
+        // normal 0-based buffer; safe regardless of how `data` was sliced.
+        let payload = data.dropFirst(headerLength + 2)
         let headerText = String(data: headerData, encoding: .utf8) ?? ""
         return (pathFromHeaders(headerText), payload)
     }
