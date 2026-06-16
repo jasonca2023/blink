@@ -4,6 +4,8 @@ Blink is a native macOS menu-bar AI companion. Hold ctrl+option for voice push-t
 
 **[Download Blink →](https://blink-jason-guo.vercel.app)** — free, universal binary (Apple Silicon + Intel), macOS 14.2+. Bring your own API keys. Installed copies auto-update in place via Sparkle, and updates keep your granted permissions.
 
+> **Already running Blink (build 13 or earlier)?** Builds before 14 were signed with a previous update key, so they can't verify the current one and **won't auto-update to build 14**. Download build 14 manually once from the link above — after that, in-place auto-update resumes normally. This is a one-time step and applies only to existing installs.
+
 ## Features
 
 - **Voice push-to-talk.** Hold ctrl+option, ask anything, let go. Blink answers in one or two sentences and only speaks when asked.
@@ -15,7 +17,8 @@ Blink is a native macOS menu-bar AI companion. Hold ctrl+option for voice push-t
 - **Cross-session memory.** Blink embeds each exchange and recalls relevant past conversations on later launches, scoped to the app you're focused on — so "what's my dog's name" still works tomorrow. Serverless and on-device: no setup, just an OpenAI or Hugging Face key for the embeddings.
 - **Agent Mode.** Send Blink longer jobs — research, refactors, file work, settings tweaks — and it runs them in the background through a bundled Codex runtime without taking the screen.
 - **Pluggable transcription.** Apple Speech (local), AssemblyAI, Deepgram, OpenAI Whisper, or Mistral Voxtral via the HuggingFace router. Picked from Settings → Voice.
-- **Apple Liquid Glass surfaces.** The floating panel, overlay, and cards use translucent system materials; the settings window uses a flat graphite dark theme. No dark gradients.
+- **Spoken replies.** Blink reads answers aloud through your choice of voice service — OpenAI TTS, GPT Realtime, ElevenLabs, Cartesia, Deepgram Aura, Microsoft Edge, or the local System voice. Pick one in Settings → Voice, or turn speech off entirely; switching needs no restart.
+- **Translucent surfaces.** The floating panel, overlay, and cards use translucent system materials (a liquid-glass-style look); the settings window uses a flat graphite dark theme. No dark gradients.
 - **Local-only.** API keys live in `~/.config/blink/secrets.env`. Nothing ships through a hosted proxy. A local control bridge at `127.0.0.1:32123` lets other trusted local apps drive the overlay, screenshots, captions, and TTS.
 
 ## Requirements
