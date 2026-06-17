@@ -133,9 +133,9 @@ private enum SplashMotion {
     static func easeIn(_ duration: Double) -> Animation { .timingCurve(0.7, 0, 0.84, 0, duration: duration) }
 }
 
-/// Tinted near-black canvas — not pure #000, which reads flat and synthetic
-/// (Hallmark anti-pattern). Cooled toward the cursor-blue accent.
-private let splashCanvas = Color(hex: "#05070C")
+/// Near-black canvas with only a faint cool tint — black-dominant, just a
+/// hint of blue rather than a navy. No bright accent blooms over it.
+private let splashCanvas = Color(hex: "#06080E")
 
 // MARK: - Root view
 
@@ -162,31 +162,11 @@ private struct BlinkStartupView: View {
         ZStack {
             splashCanvas
                 .ignoresSafeArea()
-                .opacity(canvasOpacity)
-
-            // Two fixed accent blooms — the atmospheric ground that keeps the
-            // canvas from reading as flat black and fills the negative space
-            // with depth rather than emptiness. No animation (genre rule:
-            // atmospheric allows up to two fixed blooms).
-            RadialGradient(
-                gradient: Gradient(colors: [accent.opacity(0.13), .clear]),
-                center: UnitPoint(x: 0.42, y: 0.46),
-                startRadius: 0,
-                endRadius: 360
-            )
-            .ignoresSafeArea()
-            .blendMode(.plusLighter)
-            .opacity(canvasOpacity)
-
-            RadialGradient(
-                gradient: Gradient(colors: [accent.opacity(0.09), .clear]),
-                center: UnitPoint(x: 0.82, y: 0.2),
-                startRadius: 0,
-                endRadius: 420
-            )
-            .ignoresSafeArea()
-            .blendMode(.plusLighter)
-            .opacity(canvasOpacity)
+                // Backdrop transparency firms up as the slideshow plays: 20%
+                // transparent during the intro (×0.8), easing to 10% (×0.9)
+                // once the tour fades in. tourOpacity (0→1) drives the smooth
+                // transition; canvasOpacity still runs the initial fade-in.
+                .opacity(canvasOpacity * (0.8 + 0.1 * tourOpacity))
 
             if !introRemoved {
                 introMark.opacity(introOpacity)
